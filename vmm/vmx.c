@@ -328,9 +328,9 @@ vmcs_ctls_init( struct Env* e ) {
 	procbased_ctls_or |= VMCS_PROC_BASED_VMEXEC_CTL_USEIOBMP;
 	/* CR3 accesses and invlpg don't need to cause VM Exits when EPT
 	   enabled */
-	procbased_ctls_or |= ( VMCS_PROC_BASED_VMEXEC_CTL_CR3LOADEXIT |
-				VMCS_PROC_BASED_VMEXEC_CTL_CR3STOREXIT | 
-				VMCS_PROC_BASED_VMEXEC_CTL_INVLPGEXIT );
+	//procbased_ctls_or |= ( VMCS_PROC_BASED_VMEXEC_CTL_CR3LOADEXIT |
+	//			VMCS_PROC_BASED_VMEXEC_CTL_CR3STOREXIT | 
+	//			VMCS_PROC_BASED_VMEXEC_CTL_INVLPGEXIT );
 
 	vmcs_write32( VMCS_32BIT_CONTROL_PROCESSOR_BASED_VMEXEC_CONTROLS, 
 		      procbased_ctls_or & procbased_ctls_and );
@@ -342,7 +342,9 @@ vmcs_ctls_init( struct Env* e ) {
     
 	// Enable EPT.
 	//procbased_ctls2_or |= VMCS_SECONDARY_VMEXEC_CTL_ENABLE_EPT;
-	//procbased_ctls2_or |= VMCS_SECONDARY_VMEXEC_CTL_UNRESTRICTED_GUEST;
+	procbased_ctls2_or |= VMCS_SECONDARY_VMEXEC_CTL_UNRESTRICTED_GUEST;
+    // Disable EPT.
+    procbased_ctls2_and &= ~VMCS_SECONDARY_VMEXEC_CTL_ENABLE_EPT;
 	vmcs_write32( VMCS_32BIT_CONTROL_SECONDARY_VMEXEC_CONTROLS, 
 		      procbased_ctls2_or & procbased_ctls2_and );
 
@@ -591,7 +593,7 @@ void vmexit() {
     exit_reason = vmcs_read32(VMCS_32BIT_VMEXIT_REASON);
 
 
-	cprintf( "---VMEXIT Reason: %lx---\n", exit_reason);
+	//cprintf( "---VMEXIT Reason: %lx---\n", exit_reason);
 	//vmcs_dump_cpu();
 	
 	switch(exit_reason & EXIT_REASON_MASK) {
