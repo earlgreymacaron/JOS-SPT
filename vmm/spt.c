@@ -161,6 +161,19 @@ int spt_map_hva2gva(spte_t* sptrt, void* hva, void* gva, int perm,
     return 0;
 }
 
+// Create SPT from guest memory map with guest cr3
+// if guest_cr3 is zero, it means current guest operating system does not
+// launched.
+/*
+int spt_install(gmm_t *gmm_map, physaddr_t *spt_out, physaddr_t guest_cr3) {
+    if (guest_cr3) {
+        // In this case, guest_physical_address is guest_virtual_address.
+
+    } else {
+        panic ("todo");
+    }
+}
+*/
 // FIXME: find the equivalent for SPT
 /* int spt_alloc_static(spte_t *sptrt, struct VmxGuestInfo *ginfo) {
     physaddr_t i;

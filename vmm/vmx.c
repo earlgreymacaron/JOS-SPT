@@ -289,9 +289,9 @@ void vmcs_guest_init() {
 	vmcs_write32( VMCS_32BIT_GUEST_FS_LIMIT, 0x0000FFFF );
 	vmcs_write32( VMCS_32BIT_GUEST_GS_LIMIT, 0x0000FFFF );
 	vmcs_write32( VMCS_32BIT_GUEST_LDTR_LIMIT, 0x0000FFFF );
-	vmcs_write32( VMCS_32BIT_GUEST_TR_LIMIT, 0xFFFFF );
-	vmcs_write32( VMCS_32BIT_GUEST_GDTR_LIMIT, 0x30 );
-	vmcs_write32( VMCS_32BIT_GUEST_IDTR_LIMIT, 0x3FF );
+	vmcs_write32( VMCS_32BIT_GUEST_TR_LIMIT, 0xFF );
+	vmcs_write32( VMCS_32BIT_GUEST_GDTR_LIMIT, 0x0 );
+	vmcs_write32( VMCS_32BIT_GUEST_IDTR_LIMIT, 0x0 );
 	// FIXME: Fix access rights.
 	vmcs_write32( VMCS_32BIT_GUEST_CS_ACCESS_RIGHTS, 0xF3 );
 	vmcs_write32( VMCS_32BIT_GUEST_ES_ACCESS_RIGHTS, 0xF3 );
@@ -314,7 +314,7 @@ void vmcs_guest_init() {
 	vmcs_write64( VMCS_64BIT_GUEST_LINK_POINTER, 0xffffffff );
 	vmcs_write64( VMCS_64BIT_GUEST_LINK_POINTER_HI, 0xffffffff ); 
 	vmcs_write64( VMCS_GUEST_DR7, 0x0 );
-    vmcs_write64( VMCS_GUEST_RFLAGS, FL_VM | 2);
+    vmcs_write64( VMCS_GUEST_RFLAGS, FL_IOPL_MASK | FL_VM | 2);
 
 
 }
@@ -407,8 +407,10 @@ vmcs_ctls_init( struct Env* e ) {
     //        | VMX_EPT_DEFAULT_MT
     //        | (VMX_EPT_DEFAULT_GAW << VMX_EPT_GAW_EPTP_SHIFT) );
 
-	vmcs_write32( VMCS_32BIT_CONTROL_EXCEPTION_BITMAP, 
-		      e->env_vmxinfo.exception_bmap);
+    // FIXME; we should turn on all exception bitmap in real mode
+    //        else we can use exception_bmap.
+	vmcs_write32( VMCS_32BIT_CONTROL_EXCEPTION_BITMAP, 0xffffffffu );
+//		      e->env_vmxinfo.exception_bmap);
 	vmcs_write64( VMCS_64BIT_CONTROL_IO_BITMAP_A,
 		      PADDR(e->env_vmxinfo.io_bmap_a));
 	vmcs_write64( VMCS_64BIT_CONTROL_IO_BITMAP_B,
@@ -610,15 +612,21 @@ void vmexit() {
 	int exit_reason = -1;
 	bool exit_handled = false;
 	static uint32_t host_vector;
+    uint64_t intr_info;
 	// Get the reason for VMEXIT from the VMCS.
 	// Your code here.
     exit_reason = vmcs_read32(VMCS_32BIT_VMEXIT_REASON);
 
 
 	cprintf( "---VMEXIT Reason: %lx---\n", exit_reason);
-	vmcs_dump_cpu();
+	//vmcs_dump_cpu();
 	
 	switch(exit_reason & EXIT_REASON_MASK) {
+        case EXIT_REASON_EXCEPTION_OR_NMI:
+            intr_info = vmcs_read32(VMCS_32BIT_VMEXIT_INTERRUPTION_INFO);
+            //intr_vector = initr_info & 0xff;
+            cprintf("%lx\n", intr_info);
+            break;
     	case EXIT_REASON_EXTERNAL_INT:
     		host_vector = vmcs_read32(VMCS_32BIT_VMEXIT_INTERRUPTION_INFO);
     		exit_handled = handle_interrupts(&curenv->env_tf, &curenv->env_vmxinfo, host_vector);
