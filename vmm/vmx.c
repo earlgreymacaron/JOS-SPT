@@ -241,6 +241,25 @@ void vmcs_host_init() {
 	vmcs_writel(VMCS_HOST_RIP, tmpl);
 }
 
+void update_guest_cr0 (uint64_t flag) {
+    int real_mode;
+    uint64_t hw_cr0 = CR0_NE;
+    hw_cr0 |= (CR0_WP | CR0_PG | CR0_PE); // unrestricted_guest OFF
+    real_mode = !(flag & CR0_PE);
+    if (real_mode) {
+        uint64_t flags = vmcs_read64(VMCS_GUEST_RFLAGS) | FL_IOPL_MASK | FL_VM;
+        vmcs_write64(VMCS_GUEST_RFLAGS, flags);
+        vmcs_write64(VMCS_GUEST_CR4, vmcs_read64(VMCS_GUEST_CR4) | CR4_VME);
+    }
+    vmcs_write64( VMCS_GUEST_CR0, flag | hw_cr0 );
+    vmcs_write64( VMCS_GUEST_CR4, CR4_VMXE | CR4_PAE | CR4_MCE );
+}
+
+void update_guest_cr4(uint64_t flag) {
+    uint64_t hw_cr4 = CR4_VME | CR4_PAE | CR4_VMXE;
+    vmcs_write64( VMCS_GUEST_CR4, hw_cr4 );
+}
+
 void vmcs_guest_init() {
     
 	vmcs_write16( VMCS_16BIT_GUEST_CS_SELECTOR, 0x0 );
@@ -274,12 +293,12 @@ void vmcs_guest_init() {
 	vmcs_write32( VMCS_32BIT_GUEST_GDTR_LIMIT, 0x30 );
 	vmcs_write32( VMCS_32BIT_GUEST_IDTR_LIMIT, 0x3FF );
 	// FIXME: Fix access rights.
-	vmcs_write32( VMCS_32BIT_GUEST_CS_ACCESS_RIGHTS, 0x93 );
-	vmcs_write32( VMCS_32BIT_GUEST_ES_ACCESS_RIGHTS, 0x93 );
-	vmcs_write32( VMCS_32BIT_GUEST_SS_ACCESS_RIGHTS, 0x93 );
-	vmcs_write32( VMCS_32BIT_GUEST_DS_ACCESS_RIGHTS, 0x93 );
-	vmcs_write32( VMCS_32BIT_GUEST_FS_ACCESS_RIGHTS, 0x93 );
-	vmcs_write32( VMCS_32BIT_GUEST_GS_ACCESS_RIGHTS, 0x93 );
+	vmcs_write32( VMCS_32BIT_GUEST_CS_ACCESS_RIGHTS, 0xF3 );
+	vmcs_write32( VMCS_32BIT_GUEST_ES_ACCESS_RIGHTS, 0xF3 );
+	vmcs_write32( VMCS_32BIT_GUEST_SS_ACCESS_RIGHTS, 0xF3 );
+	vmcs_write32( VMCS_32BIT_GUEST_DS_ACCESS_RIGHTS, 0xF3 );
+	vmcs_write32( VMCS_32BIT_GUEST_FS_ACCESS_RIGHTS, 0xF3 );
+	vmcs_write32( VMCS_32BIT_GUEST_GS_ACCESS_RIGHTS, 0xF3 );
 	vmcs_write32( VMCS_32BIT_GUEST_LDTR_ACCESS_RIGHTS, 0x82 );
 	vmcs_write32( VMCS_32BIT_GUEST_TR_ACCESS_RIGHTS, 0x8b );
 
@@ -287,14 +306,16 @@ void vmcs_guest_init() {
 	vmcs_write32( VMCS_32BIT_GUEST_INTERRUPTIBILITY_STATE, 0 );
 
 	vmcs_write64( VMCS_GUEST_CR3,  0);
-	vmcs_write64( VMCS_GUEST_CR0, CR0_NE );
-
-	vmcs_write64( VMCS_GUEST_CR4, CR4_VMXE );
+    vmcs_write64( VMCS_GUEST_CR0,  CR0_PE | CR0_PG | CR0_NE);
+    vmcs_write64( VMCS_GUEST_CR4,  CR4_VMXE);
+    //update_guest_cr0(CR0_NW | CR0_CD | CR0_ET);
+    //update_guest_cr4(0);
 
 	vmcs_write64( VMCS_64BIT_GUEST_LINK_POINTER, 0xffffffff );
 	vmcs_write64( VMCS_64BIT_GUEST_LINK_POINTER_HI, 0xffffffff ); 
 	vmcs_write64( VMCS_GUEST_DR7, 0x0 );
-	vmcs_write64( VMCS_GUEST_RFLAGS, 0x2 );
+    vmcs_write64( VMCS_GUEST_RFLAGS, FL_VM | 2);
+
 
 }
 
@@ -328,9 +349,9 @@ vmcs_ctls_init( struct Env* e ) {
 	procbased_ctls_or |= VMCS_PROC_BASED_VMEXEC_CTL_USEIOBMP;
 	/* CR3 accesses and invlpg don't need to cause VM Exits when EPT
 	   enabled */
-	//procbased_ctls_or |= ( VMCS_PROC_BASED_VMEXEC_CTL_CR3LOADEXIT |
-	//			VMCS_PROC_BASED_VMEXEC_CTL_CR3STOREXIT | 
-	//			VMCS_PROC_BASED_VMEXEC_CTL_INVLPGEXIT );
+	procbased_ctls_or |= ( VMCS_PROC_BASED_VMEXEC_CTL_CR3LOADEXIT |
+				VMCS_PROC_BASED_VMEXEC_CTL_CR3STOREXIT | 
+				VMCS_PROC_BASED_VMEXEC_CTL_INVLPGEXIT );
 
 	vmcs_write32( VMCS_32BIT_CONTROL_PROCESSOR_BASED_VMEXEC_CONTROLS, 
 		      procbased_ctls_or & procbased_ctls_and );
@@ -342,9 +363,10 @@ vmcs_ctls_init( struct Env* e ) {
 
 	// Enable EPT.
 	//procbased_ctls2_or |= VMCS_SECONDARY_VMEXEC_CTL_ENABLE_EPT;
-//	procbased_ctls2_or |= VMCS_SECONDARY_VMEXEC_CTL_UNRESTRICTED_GUEST;
     // Disable EPT.
-    procbased_ctls2_and &= ~VMCS_SECONDARY_VMEXEC_CTL_ENABLE_EPT;
+    procbased_ctls2_and &= ~(VMCS_SECONDARY_VMEXEC_CTL_ENABLE_EPT |
+                             VMCS_SECONDARY_VMEXEC_CTL_UNRESTRICTED_GUEST);
+	//procbased_ctls2_or |= VMCS_SECONDARY_VMEXEC_CTL_UNRESTRICTED_GUEST;
 	vmcs_write32( VMCS_32BIT_CONTROL_SECONDARY_VMEXEC_CONTROLS, 
 		      procbased_ctls2_or & procbased_ctls2_and );
 
@@ -593,8 +615,8 @@ void vmexit() {
     exit_reason = vmcs_read32(VMCS_32BIT_VMEXIT_REASON);
 
 
-	//cprintf( "---VMEXIT Reason: %lx---\n", exit_reason);
-	//vmcs_dump_cpu();
+	cprintf( "---VMEXIT Reason: %lx---\n", exit_reason);
+	vmcs_dump_cpu();
 	
 	switch(exit_reason & EXIT_REASON_MASK) {
     	case EXIT_REASON_EXTERNAL_INT:
@@ -851,7 +873,7 @@ int vmx_vmrun( struct Env *e ) {
 		// Setup the msr load/store area
 		msr_setup(&e->env_vmxinfo);
 		vmcs_ctls_init(e);
-
+        //spt_install(e->env_pml4e, e->env_cr3, 0);
 		/* ept_alloc_static(e->env_pml4e, &e->env_vmxinfo); */
 
 	} else {
@@ -861,6 +883,9 @@ int vmx_vmrun( struct Env *e ) {
 			return -E_VMCS_INIT; 
 		}
 	}
+    struct PageInfo *addr = page_alloc(0);
+    //vmcs_write64( VMCS_HOST_CR3, (uint64_t) page2pa(addr));
+    //vmcs_write64( VMCS_HOST_CR3, e->env_cr3 );
 
 	vmcs_write64( VMCS_GUEST_RSP, curenv->env_tf.tf_rsp  );
 	vmcs_write64( VMCS_GUEST_RIP, curenv->env_tf.tf_rip );

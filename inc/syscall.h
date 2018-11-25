@@ -30,6 +30,7 @@ enum {
 	SYS_ept_map,
 	SYS_guest_memory_map,
 	SYS_env_mkguest,
+    SYS_guest_map,
 #ifndef VMM_GUEST
 	SYS_vmx_list_vms,
 	SYS_vmx_sel_resume,
