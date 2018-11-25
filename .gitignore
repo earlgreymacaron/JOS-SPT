@@ -19,3 +19,6 @@
 /conf/lab.mk
 *~
 vivek.map
+
+# Ignore generated object files
+vmm/guest/*
