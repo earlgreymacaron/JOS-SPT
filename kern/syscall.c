@@ -1,6 +1,7 @@
 #include <inc/types.h>
 #include <inc/assert.h>
 #include <inc/error.h>
+#include <inc/spt.h>
 
 
 /* See COPYRIGHT for copyright information. */
@@ -24,6 +25,7 @@
 
 #ifndef VMM_GUEST
 #include <vmm/ept.h>
+#include <vmm/gmm.h>
 #include <vmm/vmx.h>
 #endif
 
@@ -518,7 +520,7 @@ sys_vmx_incr_vmdisk_number() {
 //
 // Hint: The TA solution uses ept_map_hva2gpa().  A guest environment uses 
 //       env_pml4e to store the root of the extended page tables.
-// 
+//
 static int
 sys_ept_map(envid_t srcenvid, void *srcva,
 	    envid_t guest, void* guest_pa, int perm)
@@ -550,6 +552,38 @@ sys_ept_map(envid_t srcenvid, void *srcva,
         return 0;
     }
 }
+
+// Map guest_pa of guestenv to src_va of srcenv in GMM
+static int
+sys_guest_memory_map(envid_t srcenv, void *src_va,
+	    envid_t guestenv, void* guest_pa)
+{
+    struct Env *genv, *senv;
+    struct PageInfo *srcva_pp;
+    pte_t *ppte;
+    int res;
+
+    // Check validity of arguments
+    if (envid2env(srcenv, &senv, 1) < 0 ||
+        envid2env(guestenv, &genv, 1) < 0) return -E_BAD_ENV;
+    if (src_va != ROUNDDOWN(src_va, PGSIZE) || guest_pa != ROUNDDOWN(guest_pa, PGSIZE))
+        return -E_INVAL;
+    if (src_va >= (void *) UTOP || guest_pa >= (void *)genv->env_vmxinfo.phys_sz)
+        return -E_INVAL;
+    if ((srcva_pp = page_lookup(senv->env_pml4e, src_va, &ppte)) == 0)
+        return -E_INVAL;
+
+    // Add mapping in GMM (hva -> gpa)
+    if ((res = gmm_map_hva2gpa(genv->env_pml4e, (void *)page2kva(srcva_pp), guest_pa, 0)) < 0)
+        return res;
+    else {
+        srcva_pp->pp_ref++;
+        return 0;
+    }
+
+}
+
+
 
 static envid_t
 	sys_env_mkguest(uint64_t gphysz, uint64_t gRIP) {
@@ -625,6 +659,8 @@ syscall(uint64_t syscallno, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, 
 		return sys_net_receive((void*)a1, a2);
 
 #ifndef VMM_GUEST
+	case SYS_guest_memory_map:
+		return sys_guest_memory_map(a1, (void*) a2, a3, (void*) a4);
 	case SYS_ept_map:
 		return sys_ept_map(a1, (void*) a2, a3, (void*) a4, a5);
 	case SYS_env_mkguest:

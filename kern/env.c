@@ -241,7 +241,7 @@ env_guest_alloc(struct Env **newenv_store, envid_t parent_id)
 
 	memset(&e->env_vmxinfo, 0, sizeof(struct VmxGuestInfo));
 
-	// allocate a page for the EPT PML4..
+	// allocate a page for the GMM (Guest Memory Map) PML4..
 	struct PageInfo *p = NULL;
 
 	if (!(p = page_alloc(ALLOC_ZERO)))
@@ -250,7 +250,7 @@ env_guest_alloc(struct Env **newenv_store, envid_t parent_id)
 	memset(p, 0, sizeof(struct PageInfo));
 	p->pp_ref       += 1;
 	e->env_pml4e    = page2kva(p);
-	e->env_cr3      = page2pa(p);
+//	e->env_cr3      = page2pa(p);
 
 	// Allocate a VMCS.
 	struct PageInfo *q = vmx_init_vmcs();

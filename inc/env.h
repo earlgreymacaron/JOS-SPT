@@ -72,7 +72,8 @@ struct Env {
 	pml4e_t *env_pml4e;		// Kernel virtual address of top-level page dir,
 	// or root of extended page tables in guest mode.
 	physaddr_t env_cr3;
-
+  // NOTE:
+  // In SPT mode, env_pml4e points to GMM root and env_cr3 points to SPT root
 
 	// Exception handling
 	void *env_pgfault_upcall;	// Page fault upcall entry point

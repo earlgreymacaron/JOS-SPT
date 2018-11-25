@@ -164,7 +164,7 @@ int spt_map_hva2gva(spte_t* sptrt, void* hva, void* gva, int perm,
 // FIXME: find the equivalent for SPT
 /* int spt_alloc_static(spte_t *sptrt, struct VmxGuestInfo *ginfo) {
     physaddr_t i;
-    
+
     for(i=0x0; i < 0xA0000; i+=PGSIZE) {
         struct PageInfo *p = page_alloc(0);
         p->pp_ref += 1;

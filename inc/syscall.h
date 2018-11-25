@@ -28,6 +28,7 @@ enum {
 	SYS_net_receive,
 
 	SYS_ept_map,
+	SYS_guest_memory_map,
 	SYS_env_mkguest,
 #ifndef VMM_GUEST
 	SYS_vmx_list_vms,

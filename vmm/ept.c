@@ -162,7 +162,7 @@ int ept_map_hva2gpa(epte_t* eptrt, void* hva, void* gpa, int perm,
 
 int ept_alloc_static(epte_t *eptrt, struct VmxGuestInfo *ginfo) {
     physaddr_t i;
-    
+
     for(i=0x0; i < 0xA0000; i+=PGSIZE) {
         struct PageInfo *p = page_alloc(0);
         p->pp_ref += 1;

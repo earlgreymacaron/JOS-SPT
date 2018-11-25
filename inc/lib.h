@@ -78,6 +78,7 @@ int	sys_net_transmit(const char *data, unsigned int len);
 int	sys_net_receive(char *buf, unsigned int len);
 
 int sys_ept_map(envid_t srcenvid, void *srcva, envid_t guest, void* guest_pa, int perm);
+int sys_guest_memory_map(envid_t srcenvid, void *srcva, envid_t guest, void* guest_pa);
 envid_t sys_env_mkguest(uint64_t gphysz, uint64_t gRIP);
 #ifndef VMM_GUEST
 void	sys_vmx_list_vms();

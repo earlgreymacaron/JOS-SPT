@@ -151,6 +151,13 @@ sys_ept_map(envid_t srcenvid, void *srcva, envid_t guest, void* guest_pa, int pe
 		       (uint64_t)srcva, guest, (uint64_t)guest_pa, perm);
 }
 
+int
+sys_guest_memory_map(envid_t srcenvid, void *srcva, envid_t guest, void* guest_pa) 
+{
+	return syscall(SYS_guest_memory_map, 0, srcenvid, 
+		       (uint64_t)srcva, guest, (uint64_t)guest_pa, 0);
+}
+
 envid_t
 sys_env_mkguest(uint64_t gphysz, uint64_t gRIP) {
 	return (envid_t) syscall(SYS_env_mkguest, 0, gphysz, gRIP, 0, 0, 0);

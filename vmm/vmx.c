@@ -339,10 +339,10 @@ vmcs_ctls_init( struct Env* e ) {
 	uint32_t procbased_ctls2_or, procbased_ctls2_and;
 	vmx_read_capability_msr( IA32_VMX_PROCBASED_CTLS2, 
 				 &procbased_ctls2_and, &procbased_ctls2_or );
-    
+
 	// Enable EPT.
 	//procbased_ctls2_or |= VMCS_SECONDARY_VMEXEC_CTL_ENABLE_EPT;
-	procbased_ctls2_or |= VMCS_SECONDARY_VMEXEC_CTL_UNRESTRICTED_GUEST;
+//	procbased_ctls2_or |= VMCS_SECONDARY_VMEXEC_CTL_UNRESTRICTED_GUEST;
     // Disable EPT.
     procbased_ctls2_and &= ~VMCS_SECONDARY_VMEXEC_CTL_ENABLE_EPT;
 	vmcs_write32( VMCS_32BIT_CONTROL_SECONDARY_VMEXEC_CONTROLS, 

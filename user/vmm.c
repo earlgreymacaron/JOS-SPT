@@ -36,7 +36,7 @@ map_in_guest( envid_t guest, uintptr_t gpa, size_t memsz,
         void *hva = do_alloc();
         if (pos < filesz)
             read (fd, hva, filesz - pos > PGSIZE ? PGSIZE : filesz - pos);
-        if ((res = sys_ept_map(me, hva, guest, (void *) gpa + pos, __EPTE_READ | __EPTE_WRITE | __EPTE_EXEC)) < 0)
+        if ((res = sys_guest_memory_map(me, hva, guest, (void *) gpa + pos)) < 0)
             return res;
     }
     return 0;
