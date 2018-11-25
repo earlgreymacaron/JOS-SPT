@@ -4,6 +4,7 @@
 #include <inc/error.h>
 #include <vmm/vmexits.h>
 #include <vmm/ept.h>
+#include <vmm/spt.h>
 #include <inc/x86.h>
 #include <inc/assert.h>
 #include <kern/pmap.h>

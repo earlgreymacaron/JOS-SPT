@@ -57,6 +57,7 @@ KERN_SRCFILES +=	kern/e1000.c \
 
 ifndef GUEST_KERN
 KERN_SRCFILES +=	vmm/ept.c \
+			vmm/spt.c \
 			vmm/vmx.c \
 			vmm/vmexits.c 
 endif
