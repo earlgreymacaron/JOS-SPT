@@ -155,6 +155,13 @@ envid_t
 sys_env_mkguest(uint64_t gphysz, uint64_t gRIP) {
 	return (envid_t) syscall(SYS_env_mkguest, 0, gphysz, gRIP, 0, 0, 0);
 }
+
+int
+sys_guest_map(envid_t srcenvid, void *srcva, envid_t guest, void* guest_pa, int perm) 
+{
+	return syscall(SYS_guest_map, 0, srcenvid, 
+		       (uint64_t)srcva, guest, (uint64_t)guest_pa, perm);
+}
 #ifndef VMM_GUEST
 void
 sys_vmx_list_vms() {
