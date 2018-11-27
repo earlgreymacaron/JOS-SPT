@@ -4,8 +4,8 @@
  * GMM does not need to manage permissions
  */
 
-#ifndef JOS_VMX_SPT_H
-#define JOS_VMX_SPT_H
+#ifndef JOS_VMX_GMM_H
+#define JOS_VMX_GMM_H
 
 #include <inc/mmu.h>
 #include <vmm/vmx.h>

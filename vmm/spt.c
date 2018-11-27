@@ -174,6 +174,54 @@ int spt_install(gmm_t *gmm_map, physaddr_t *spt_out, physaddr_t guest_cr3) {
     }
 }
 */
+
+/*
+ * Allocate SPT (GVA -> MA) using the GMM (GPA -> MA) and guest page table (GVA -> GPA).
+ */
+spte_t* spt_alloc_from_gmm(spte_t* spte, gmme_t *gmm_map, uint64_t guest_cr3){
+    int i, j, k;
+    const int NB_ENTRIES = 1 << 9;
+
+    pml4e_t* pml4e;
+    pdpe_t* pdpe;
+    pde_t* pgdir;
+    pte_t* pte;
+    uint64_t *gva = 0, *hva = 0;
+
+    // Check existence of guest page table
+    if(guest_cr3){
+        // Retrieve the 4-level page table pointer from guest_cr3
+        pml4e = KADDR(guest_cr3); // FIXME: not sure about this part (maybe use lcr3 instead)
+        // Walk through the entire table
+        for(i = 0; i < NB_ENTRIES; i++){
+            pdpe = KADDR(pml4e[i]);
+            // Check existence of third level
+            if(pdpe){
+                for(j = 0; j < NB_ENTRIES; j++){
+                    pgdir = KADDR(pdpe[j]);
+                    // Check existence of second level
+                    if(pgdir) {
+                        for(k = 0; k < NB_ENTRIES; k++){
+                            pte = KADDR(pgdir[k]);
+                            // Check that an entry has been found
+                            if(pte){
+                                // Retrieve the hva from the gmm
+                                gmm_gpa2hva(gmm_map, pte,(void **) &hva);
+                                if(hva){
+                                    // Compute the gva from the walk steps
+                                    gva = (uint64_t *)((uint64_t)i << 3 * 9 | j << 2 * 9 | k << 9);
+                                    // Map the gva to the hva in SPT
+                                    spt_map_hva2gva(spte, hva, gva, __SPTE_FULL, 1);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return spte;
+}
 // FIXME: find the equivalent for SPT
 /* int spt_alloc_static(spte_t *sptrt, struct VmxGuestInfo *ginfo) {
     physaddr_t i;
