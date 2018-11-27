@@ -186,7 +186,7 @@ int spt_alloc_from_gmm(spte_t* spte, gmme_t *gmm_map, uint64_t guest_cr3){
     pdpe_t* pdpe;
     pde_t* pgdir;
     pte_t* pte;
-    uint64_t *gva = 0, *hva = 0;
+    uint64_t *gva = 0, *gpa = 0, *hva = 0;
 
     if(spte == NULL || gmm_map == NULL) return -E_INVAL;
 
@@ -211,8 +211,9 @@ int spt_alloc_from_gmm(spte_t* spte, gmme_t *gmm_map, uint64_t guest_cr3){
                         pte = KADDR(pgdir[k]);
                         // Check that an entry has been found
                         if(pte){
+                            gpa = (uint64_t *) *pte;
                             // Retrieve the hva from the gmm
-                            gmm_gpa2hva(gmm_map, pte,(void **) &hva);
+                            gmm_gpa2hva(gmm_map, gpa,(void **) &hva);
                             if(hva){
                                 // Compute the gva from the walk steps
                                 gva = (uint64_t *)((uint64_t)i << 3 * 9 | j << 2 * 9 | k << 9);

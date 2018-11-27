@@ -156,3 +156,40 @@ int gmm_map_hva2gpa(gmme_t* gmmrt, void* hva, void* gpa, int overwrite) {
 
     return 0;
 }
+
+int gmm_alloc_from_ept(gmme_t* gmmrt, epte_t* epte){
+    const int NB_ENTRIES = 1 << 9;
+
+    pml4e_t* pml4e;
+    pdpe_t* pdpe;
+    pde_t* pgdir;
+    pte_t* pte;
+
+    int i, j, k;
+    uint64_t *gpa, *hva;
+
+    if(gmmrt == NULL || epte == NULL) return -E_INVAL;
+
+    pml4e = epte;
+
+    for(i = 0; i < NB_ENTRIES; i++){
+        pdpe = KADDR(pml4e[i]);
+        if(pdpe){
+            for(j = 0; j < NB_ENTRIES; j++){
+                pgdir = KADDR(pdpe[j]);
+                if(pgdir) {
+                    for(k = 0; k < NB_ENTRIES; k++){
+                        pte = KADDR(pgdir[k]);
+                        // Check that an ept entry has been found
+                        if(pte){
+                            hva = KADDR(*pte);
+                            gpa = (uint64_t *) ((uint64_t) i << 3 * 9 | j << 2 * 9 | k << 9);
+                            gmm_map_hva2gpa(gmmrt, hva, gpa, 1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}

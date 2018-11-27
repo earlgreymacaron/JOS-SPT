@@ -9,6 +9,7 @@
 
 #include <inc/mmu.h>
 #include <vmm/vmx.h>
+#include <vmm/ept.h>
 
 
 typedef uint64_t gmme_t;
@@ -17,6 +18,7 @@ int gmm_map_hva2gpa(gmme_t *gmmrt, void* hva, void* gpa, int overwrite);
 void gmm_free_guest_mem(gmme_t *gmmrt);
 void gmm_gpa2hva(gmme_t *gmmrt, void *gpa, void **hva);
 int gmm_page_insert(gmme_t *gmmrt, struct PageInfo* pp, void* gpa);
+int gmm_alloc_from_ept(gmme_t* gmmrt, epte_t* epte);
 
 #define GMM_LEVELS 4
 
