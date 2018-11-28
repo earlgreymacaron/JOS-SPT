@@ -34,6 +34,7 @@ int vmx_init_vmxon();
 int vmx_vmrun( struct Env *e );
 void vmx_list_vms();
 bool vmx_sel_resume(int num);
+void vmx_read_capability_msr( uint32_t msr, uint32_t* hi, uint32_t* lo );
 struct PageInfo * vmx_init_vmcs();
 
 /* VMX Capalibility MSRs */

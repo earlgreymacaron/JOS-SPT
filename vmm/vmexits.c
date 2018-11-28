@@ -266,12 +266,74 @@ envid_t get_fs_fs(void) {
 
 void vmx_switch_ept(struct Trapframe *tf, struct VmxGuestInfo *gInfo,
         uint64_t *eptrt) {
-    panic("todo: vmx_swtich_ept");
+    // Set proc-based controls.
+    uint32_t procbased_ctls_or, procbased_ctls_and;
+    vmx_read_capability_msr( IA32_VMX_PROCBASED_CTLS, 
+            &procbased_ctls_and, &procbased_ctls_or );
+    // Make sure there are secondary controls.
+    assert( BIT( procbased_ctls_and, 31 ) == 0x1 ); 
+
+    procbased_ctls_or |= VMCS_PROC_BASED_VMEXEC_CTL_ACTIVESECCTL; 
+    procbased_ctls_or |= VMCS_PROC_BASED_VMEXEC_CTL_HLTEXIT;
+    procbased_ctls_or |= VMCS_PROC_BASED_VMEXEC_CTL_USEIOBMP;
+    /* CR3 accesses and invlpg don't need to cause VM Exits when EPT
+       enabled */
+    procbased_ctls_or &= ~( VMCS_PROC_BASED_VMEXEC_CTL_CR3LOADEXIT |
+            VMCS_PROC_BASED_VMEXEC_CTL_CR3STOREXIT | 
+            VMCS_PROC_BASED_VMEXEC_CTL_INVLPGEXIT );
+
+    vmcs_write32( VMCS_32BIT_CONTROL_PROCESSOR_BASED_VMEXEC_CONTROLS, 
+            procbased_ctls_or & procbased_ctls_and );
+
+    // Set Proc based secondary controls.
+    uint32_t procbased_ctls2_or, procbased_ctls2_and;
+    vmx_read_capability_msr( IA32_VMX_PROCBASED_CTLS2, 
+            &procbased_ctls2_and, &procbased_ctls2_or );
+
+    // Enable EPT.
+    procbased_ctls2_or |= VMCS_SECONDARY_VMEXEC_CTL_ENABLE_EPT;
+    procbased_ctls2_or |= VMCS_SECONDARY_VMEXEC_CTL_UNRESTRICTED_GUEST;
+    vmcs_write32( VMCS_32BIT_CONTROL_SECONDARY_VMEXEC_CONTROLS, 
+            procbased_ctls2_or & procbased_ctls2_and );
+
+    uint64_t ept_ptr = (uint64_t) eptrt | ( ( EPT_LEVELS - 1 ) << 3 );
+    vmcs_write64( VMCS_64BIT_CONTROL_EPTPTR, ept_ptr 
+            | VMX_EPT_DEFAULT_MT
+            | (VMX_EPT_DEFAULT_GAW << VMX_EPT_GAW_EPTP_SHIFT) );
 }
 
 void vmx_switch_spt(struct Trapframe *tf, struct VmxGuestInfo *gInfo,
         uint64_t *eptrt) {
-    panic("todo: vmx_swtich_spt");
+    // Set proc-based controls.
+    uint32_t procbased_ctls_or, procbased_ctls_and;
+    vmx_read_capability_msr( IA32_VMX_PROCBASED_CTLS, 
+            &procbased_ctls_and, &procbased_ctls_or );
+    // Make sure there are secondary controls.
+    assert( BIT( procbased_ctls_and, 31 ) == 0x1 ); 
+
+    procbased_ctls_or |= VMCS_PROC_BASED_VMEXEC_CTL_ACTIVESECCTL; 
+    procbased_ctls_or |= VMCS_PROC_BASED_VMEXEC_CTL_HLTEXIT;
+    procbased_ctls_or |= VMCS_PROC_BASED_VMEXEC_CTL_USEIOBMP;
+    /* CR3 accesses and invlpg don't need to cause VM Exits when EPT
+       enabled */
+    procbased_ctls_or |= VMCS_PROC_BASED_VMEXEC_CTL_CR3LOADEXIT |
+                         VMCS_PROC_BASED_VMEXEC_CTL_CR3STOREXIT |
+                         VMCS_PROC_BASED_VMEXEC_CTL_INVLPGEXIT;
+
+    vmcs_write32( VMCS_32BIT_CONTROL_PROCESSOR_BASED_VMEXEC_CONTROLS, 
+            procbased_ctls_or & procbased_ctls_and );
+
+    // Set Proc based secondary controls.
+    uint32_t procbased_ctls2_or, procbased_ctls2_and;
+    vmx_read_capability_msr( IA32_VMX_PROCBASED_CTLS2, 
+            &procbased_ctls2_and, &procbased_ctls2_or );
+
+    // Enable EPT.
+    procbased_ctls2_or &= ~( VMCS_SECONDARY_VMEXEC_CTL_ENABLE_EPT |
+                             VMCS_SECONDARY_VMEXEC_CTL_UNRESTRICTED_GUEST);
+    vmcs_write32( VMCS_32BIT_CONTROL_SECONDARY_VMEXEC_CONTROLS,
+            procbased_ctls2_or & procbased_ctls2_and );
+    cprintf("trans");
 }
 
 bool
@@ -406,18 +468,23 @@ handle_vmcall(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
 		break;
     case VMX_VMCALL_SWITCH_MMODE: // switch the memory mode
         mmode = tf->tf_regs.reg_rbx;
-        switch (mmode) {
-            case MODE_EPT:
-                gInfo->mmode = mmode;
-                vmx_switch_spt(tf, gInfo, eptrt);
-            case MODE_SPT:
-                gInfo->mmode = mmode;
-                vmx_switch_ept(tf, gInfo, eptrt);
-                break;
-            default:
-                panic("Illegal mode");
+        if (gInfo->mmode != mmode) {
+            switch (mmode) {
+                case MODE_EPT:
+                    gInfo->mmode = mmode;
+                    vmx_switch_ept(tf, gInfo, eptrt);
+                    // TODO
+                case MODE_SPT:
+                    gInfo->mmode = mmode;
+                    vmx_switch_spt(tf, gInfo, eptrt);
+                    // TODO: eptrt + cr3 -> gcr3
+                    break;
+                default:
+                    panic("Illegal mode");
+            }
         }
-         
+        tf->tf_regs.reg_rax = 0;
+        handled = true;
 	}
 	if(handled) {
 		/* Advance the program counter by the length of the vmcall instruction. 
