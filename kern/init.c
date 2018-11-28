@@ -59,9 +59,6 @@ i386_init(void)
 	/* __asm __volatile("int $12"); */
 
 	extern char edata[], end[];
-#ifdef VMM_GUEST // Call vmcall to change the memory to to SPT.'
-    vmcall(VMX_VMCALL_SWITCH_MMODE, 0, MODE_SPT, 0, 0, 0, 0);
-#endif
 	// Before doing anything else, complete the ELF loading process.
 	// Clear the uninitialized global data (BSS) section of our program.
 	// This ensures that all static/global variables start out zero.
@@ -97,6 +94,9 @@ i386_init(void)
 
 	// Lab 2 memory management initialization functions
 	x64_vm_init();
+#ifdef VMM_GUEST // Call vmcall to change the memory to to SPT.'
+    vmcall(VMX_VMCALL_SWITCH_MMODE, 0, MODE_SPT, 0, 0, 0, 0);
+#endif
 
 
 	// Lab 3 user environment initialization functions
@@ -163,8 +163,6 @@ i386_init(void)
 
 	// Should not be necessary - drains keyboard because interrupt has given up.
 	kbd_intr();
-
-
 
 	// Schedule and run the first user environment!
 	sched_yield();

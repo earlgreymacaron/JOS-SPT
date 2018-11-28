@@ -586,7 +586,8 @@ void vmexit() {
 	int exit_reason = -1;
 	bool exit_handled = false;
 	static uint32_t host_vector;
-	// Get the reason for VMEXIT from the VMCS.
+	static uint32_t intr_info;
+    // Get the reason for VMEXIT from the VMCS.
 	// Your code here.
     exit_reason = vmcs_read32(VMCS_32BIT_VMEXIT_REASON);
 
@@ -595,6 +596,11 @@ void vmexit() {
 	//vmcs_dump_cpu();
 	
 	switch(exit_reason & EXIT_REASON_MASK) {
+        case EXIT_REASON_EXCEPTION_OR_NMI:
+            intr_info = vmcs_read32(VMCS_32BIT_VMEXIT_INTERRUPTION_INFO);
+            exit_handled = handle_nmi(&curenv->env_tf, &curenv->env_vmxinfo,
+                    curenv->env_pml4e, intr_info);
+            break;
     	case EXIT_REASON_EXTERNAL_INT:
     		host_vector = vmcs_read32(VMCS_32BIT_VMEXIT_INTERRUPTION_INFO);
     		exit_handled = handle_interrupts(&curenv->env_tf, &curenv->env_vmxinfo, host_vector);
@@ -621,7 +627,11 @@ void vmexit() {
 					exit_handled = handle_vmcall(&curenv->env_tf, &curenv->env_vmxinfo,
 				curenv->env_pml4e);
 		break;
-
+        case EXIT_REASON_MOV_CR:
+            panic("CR3");
+//            exit_handled = handle_mov_cr(&curenv->env_tf, &curenv->env_vmxinfo,
+//                    curenv->env_pml4e);
+            break;
 				case EXIT_REASON_HLT:
 		cprintf("\nHLT in guest, exiting guest.\n");
 		env_destroy(curenv);

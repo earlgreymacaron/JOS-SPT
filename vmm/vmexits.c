@@ -4,7 +4,6 @@
 #include <inc/error.h>
 #include <vmm/vmexits.h>
 #include <vmm/ept.h>
-#include <vmm/spt.h>
 #include <inc/x86.h>
 #include <inc/assert.h>
 #include <kern/pmap.h>
@@ -14,10 +13,13 @@
 #include <inc/string.h>
 #include <inc/stdio.h>
 #include <inc/vmx.h>
+#include <inc/mmu.h>
 #include <kern/syscall.h>
 #include <kern/env.h>
 #include <kern/cpu.h>
 
+bool
+insert_ept_entry (uint64_t *eptrt, uint64_t gpa, struct VmxGuestInfo *ginfo);
 
 static int vmdisk_number = 0;	//this number assign to the vm
 int 
@@ -59,6 +61,58 @@ handle_interrupt_window(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint32
 	vmcs_write32( VMCS_32BIT_CONTROL_VMENTRY_INTERRUPTION_INFO , host_vector);
 	return true;
 }
+
+bool
+handle_pf(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint64_t *eptrt) {
+    uint64_t fault_addr = vmcs_read64(VMCS_VMEXIT_QUALIFICATION);
+    void *guest_cr3 = (void *)ginfo->gcr3; // gpa
+    pml4e_t *sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
+    pml4e_t *pml4e; // hva
+    pdpe_t *pdpe, gpdpe;
+    pde_t *pde, gpde;
+    pte_t *pte, gpte;
+    physaddr_t pa, gpa;
+    ept_gpa2hva(eptrt, (void *) guest_cr3, (void **) &pml4e);
+
+    gpdpe = pml4e[PML4(fault_addr)];
+    if (gpdpe & PTE_P) {
+        ept_gpa2hva(eptrt, (void *) gpdpe, (void **) &pdpe);
+        gpde = pdpe[PDPE(fault_addr)];
+        if (gpde & PTE_P) {
+            ept_gpa2hva(eptrt, (void *) gpde, (void **) &pde);
+            gpte = pde[PDX(fault_addr)];
+            if (gpte & PTE_P) {
+                ept_gpa2hva(eptrt, (void *) gpte, (void **) &pte);
+                gpa = (physaddr_t)pte[PTX(fault_addr)];
+                if ((uint64_t) gpa & PTE_P) {
+                    ept_gpa2hva(eptrt, (void *) gpa, (void **) &pa);
+                    if (!pa) {
+                        insert_ept_entry(eptrt, gpa, ginfo);
+                        ept_gpa2hva(eptrt, (void *) gpa, (void **) &pa);
+                    }
+                    if (pa) {
+                        pa = (physaddr_t)PADDR(pa);
+                        page_insert(sptrt, pa2page(pa), (void *)PTE_ADDR(fault_addr), PGOFF(gpa));
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+bool
+handle_nmi(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint64_t *eptrt,
+           uint32_t intr_info) {
+    uint32_t vector = intr_info & 0xff;
+    switch (vector) {
+        case 14: return handle_pf(tf, ginfo, eptrt);
+        default:
+            return false;
+    }
+}
+
 bool
 handle_interrupts(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint32_t host_vector) {
 	uint64_t rflags;
@@ -137,11 +191,10 @@ handle_wrmsr(struct Trapframe *tf, struct VmxGuestInfo *ginfo) {
 	return false;
 }
 
-bool
-handle_eptviolation(uint64_t *eptrt, struct VmxGuestInfo *ginfo) {
-	uint64_t gpa = vmcs_read64(VMCS_64BIT_GUEST_PHYSICAL_ADDR);
-	int r;
 
+bool
+insert_ept_entry (uint64_t *eptrt, uint64_t gpa, struct VmxGuestInfo *ginfo) {
+	int r;
 	if(gpa < 0xA0000 || (gpa >= 0x100000 && gpa < ginfo->phys_sz)) 
 
 	{
@@ -166,7 +219,13 @@ handle_eptviolation(uint64_t *eptrt, struct VmxGuestInfo *ginfo) {
 		return true;
 	}
 	cprintf("vmm: handle_eptviolation: Case 2, gpa %x >= %x\n", gpa, ginfo->phys_sz);
-	return false;
+    return false;
+}
+
+bool
+handle_eptviolation(uint64_t *eptrt, struct VmxGuestInfo *ginfo) {
+	uint64_t gpa = vmcs_read64(VMCS_64BIT_GUEST_PHYSICAL_ADDR);
+    return insert_ept_entry(eptrt, gpa, ginfo);
 }
 
 bool
@@ -333,7 +392,8 @@ void vmx_switch_spt(struct Trapframe *tf, struct VmxGuestInfo *gInfo,
                              VMCS_SECONDARY_VMEXEC_CTL_UNRESTRICTED_GUEST);
     vmcs_write32( VMCS_32BIT_CONTROL_SECONDARY_VMEXEC_CONTROLS,
             procbased_ctls2_or & procbased_ctls2_and );
-    cprintf("trans");
+    vmcs_write32( VMCS_32BIT_CONTROL_EXCEPTION_BITMAP, (1 << 14));
+
 }
 
 
@@ -386,7 +446,6 @@ handle_vmcall(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
 	// phys address of the multiboot map in the guest.
 	uint64_t multiboot_map_addr = 0x6000;
     MemoryMode mmode;
-    spte_t *sptrt;
     uint64_t guest_cr3;
     
     struct PageInfo *new_page;
@@ -474,7 +533,6 @@ handle_vmcall(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
 		break;
     case VMX_VMCALL_SWITCH_MMODE: // switch the memory mode
         mmode = tf->tf_regs.reg_rdx;
-        cprintf("%lx\n", mmode);
         if (gInfo->mmode != mmode) {
             switch (mmode) {
                 case MODE_EPT:
@@ -485,9 +543,11 @@ handle_vmcall(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
                 case MODE_SPT:
                     gInfo->mmode = mmode;
                     vmx_switch_spt(tf, gInfo, eptrt);
-                    guest_cr3 = vmcs_read64(VMCS_GUEST_CR3);
-                    spt_alloc_from_ept(&sptrt, eptrt, guest_cr3);
-                    vmcs_write64(VMCS_GUEST_CR3, (uint64_t) PADDR(sptrt));
+                    gInfo->gcr3 = (physaddr_t *)vmcs_read64(VMCS_GUEST_CR3);
+                    new_page = page_alloc(ALLOC_ZERO);
+                    if (!new_page) return -E_NO_MEM;
+                    new_page->pp_ref++;
+                    vmcs_write64(VMCS_GUEST_CR3, (uint64_t) page2pa(new_page));
                     break;
                 default:
                     panic("Illegal mode");
@@ -508,3 +568,46 @@ handle_vmcall(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
 }
 
 
+uint64_t *decode_register(struct Trapframe *tf, int r) {
+    switch (r) {
+        case 0:  return &tf->tf_regs.reg_rax;
+        case 1:  return &tf->tf_regs.reg_rcx;
+        case 2:  return &tf->tf_regs.reg_rdx;
+        case 3:  return &tf->tf_regs.reg_rbx;
+        case 4:  return &tf->tf_rsp;
+        case 5:  return &tf->tf_regs.reg_rbp;
+        case 6:  return &tf->tf_regs.reg_rsi;
+        case 7:  return &tf->tf_regs.reg_rdi;
+        case 8:  return &tf->tf_regs.reg_r8;
+        case 9:  return &tf->tf_regs.reg_r9;
+        case 10: return &tf->tf_regs.reg_r10;
+        case 11: return &tf->tf_regs.reg_r11;
+        case 12: return &tf->tf_regs.reg_r12;
+        case 13: return &tf->tf_regs.reg_r13;
+        case 14: return &tf->tf_regs.reg_r14;
+        case 15: return &tf->tf_regs.reg_r15;
+        default: panic("Never reach");
+    }
+}
+
+ /* 11:8 - general purpose register operand */
+#define VMX_REG_ACCESS_GPR(eq)  (((eq) >> 8) & 0xf)
+#define VMX_CR_REASON_MASK 0x3f
+bool
+handle_mov_cr(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
+{
+    uint32_t reason = vmcs_readl(VMCS_VMEXIT_QUALIFICATION);
+    uint32_t gpr = VMX_REG_ACCESS_GPR(reason);
+    uint64_t *src = decode_register(tf, gpr);
+    switch (reason & VMX_CR_REASON_MASK) {
+        case VMEXIT_CR3_READ:
+            // get gcr3 and translated to gpa and then write it to value
+            break;
+        case VMEXIT_CR3_WRITE:
+            // get gpa and generate new spt and write it to gcr3
+            break;
+        default:
+            return 0;
+    }
+    return 1;
+}

@@ -155,7 +155,7 @@ int ept_map_hva2gpa(epte_t* eptrt, void* hva, void* gpa, int perm,
         if (overwrite) page_decref(pa2page(epte_addr(*epte_out)));
         else return -E_INVAL;
     }
-
+    //cprintf("%lx->%lx\n", gpa, PADDR(hva));
     *epte_out = __EPTE_IPAT | perm | PADDR(hva) | __EPTE_TYPE(EPTE_TYPE_WB);
     return 0;
 }
