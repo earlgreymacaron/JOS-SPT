@@ -336,6 +336,7 @@ void vmx_switch_spt(struct Trapframe *tf, struct VmxGuestInfo *gInfo,
     cprintf("trans");
 }
 
+
 bool
 handle_ipc_send(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt) {
     envid_t to_env = tf->tf_regs.reg_rbx;
@@ -385,6 +386,11 @@ handle_vmcall(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
 	// phys address of the multiboot map in the guest.
 	uint64_t multiboot_map_addr = 0x6000;
     MemoryMode mmode;
+    spte_t *sptrt;
+    uint64_t guest_cr3;
+    
+    struct PageInfo *new_page;
+
 	switch(tf->tf_regs.reg_rax) {
 	case VMX_VMCALL_MBMAP:
 		// Craft a multiboot (e820) memory map for the guest.
@@ -467,17 +473,21 @@ handle_vmcall(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
 		handled = true;
 		break;
     case VMX_VMCALL_SWITCH_MMODE: // switch the memory mode
-        mmode = tf->tf_regs.reg_rbx;
+        mmode = tf->tf_regs.reg_rdx;
+        cprintf("%lx\n", mmode);
         if (gInfo->mmode != mmode) {
             switch (mmode) {
                 case MODE_EPT:
                     gInfo->mmode = mmode;
                     vmx_switch_ept(tf, gInfo, eptrt);
-                    // TODO
+                    //TODO
+                    break;
                 case MODE_SPT:
                     gInfo->mmode = mmode;
                     vmx_switch_spt(tf, gInfo, eptrt);
-                    // TODO: eptrt + cr3 -> gcr3
+                    guest_cr3 = vmcs_read64(VMCS_GUEST_CR3);
+                    spt_alloc_from_ept(&sptrt, eptrt, guest_cr3);
+                    vmcs_write64(VMCS_GUEST_CR3, (uint64_t) PADDR(sptrt));
                     break;
                 default:
                     panic("Illegal mode");

@@ -178,17 +178,18 @@ int spt_install(gmm_t *gmm_map, physaddr_t *spt_out, physaddr_t guest_cr3) {
 /*
  * Allocate SPT (GVA -> MA) using the GMM (GPA -> MA) and guest page table (GVA -> GPA).
  */
-int spt_alloc_from_gmm(spte_t* spte, gmme_t *gmm_map, uint64_t guest_cr3){
-    int i, j, k;
+int spt_alloc_from_ept(spte_t **sptrt, epte_t *eptrt, uint64_t guest_cr3){
+    uint64_t i, j, k, l;
     const int NB_ENTRIES = 1 << 9;
 
     pml4e_t* pml4e;
     pdpe_t* pdpe;
     pde_t* pgdir;
     pte_t* pte;
-    uint64_t *gva = 0, *gpa = 0, *hva = 0;
+    uint64_t *gva = 0, *gpa = 0, *hva = 0, *hpa = 0;
+    struct PageInfo *new_page;
 
-    if(spte == NULL || gmm_map == NULL) return -E_INVAL;
+    if(eptrt == NULL) return -E_INVAL;
 
     // Check existence of guest page table
     if(!guest_cr3){
@@ -196,29 +197,38 @@ int spt_alloc_from_gmm(spte_t* spte, gmme_t *gmm_map, uint64_t guest_cr3){
         return -E_INVAL;
     }
 
+    // Allocate a new page for SPT root page
+    new_page = page_alloc(ALLOC_ZERO);
+    if (!new_page) return -E_NO_MEM;
+    new_page->pp_ref++;
+    *sptrt = (spte_t *) page2kva(new_page);
+
     // Retrieve the 4-level page table pointer from guest_cr3
-    pml4e = KADDR(guest_cr3); // FIXME: not sure about this part (maybe use lcr3 instead)
+    ept_gpa2hva(eptrt, (void *) guest_cr3, (void **) &pml4e);
+    cprintf("pml4e: %lx\n", pml4e);
+
     // Walk through the entire table
-    for(i = 0; i < NB_ENTRIES; i++){
-        pdpe = KADDR(pml4e[i]);
-        // Check existence of third level
-        if(pdpe){
-            for(j = 0; j < NB_ENTRIES; j++){
-                pgdir = KADDR(pdpe[j]);
-                // Check existence of second level
-                if(pgdir) {
-                    for(k = 0; k < NB_ENTRIES; k++){
-                        pte = KADDR(pgdir[k]);
-                        // Check that an entry has been found
-                        if(pte){
-                            gpa = (uint64_t *) *pte;
-                            // Retrieve the hva from the gmm
-                            gmm_gpa2hva(gmm_map, gpa,(void **) &hva);
-                            if(hva){
-                                // Compute the gva from the walk steps
-                                gva = (uint64_t *)((uint64_t)i << 3 * 9 | j << 2 * 9 | k << 9);
-                                // Map the gva to the hva in SPT
-                                spt_map_hva2gva(spte, hva, gva, __SPTE_FULL, 1);
+    for (i = 0; pml4e && i < NB_ENTRIES; i++) {
+        if (pml4e[i]) {
+            ept_gpa2hva(eptrt, (void *) pml4e[i], (void **) &pdpe);
+            cprintf("pml4e %d alloc @  (GPA: %lx, HVA: %lx)\n", i, pml4e[i], pdpe);
+            for (j = 0; pdpe && j < NB_ENTRIES; j++) {
+                if (pdpe[j]) {
+                    ept_gpa2hva(eptrt, (void *) pdpe[j], (void **) &pgdir);
+                    cprintf("pdpe %d alloc @ (GPA: %lx, HVA: %lx)\n", j, pdpe[i], pgdir);
+                    for (k = 0; pgdir && k < NB_ENTRIES; k++) {
+                        if (pgdir[k]) {
+                            ept_gpa2hva(eptrt, (void *) pgdir[k], (void **) &pte);
+                            cprintf("pgdir %d GPA: %lx -> HVA: %lx\n", k, pgdir[k], pte);
+                            for (l = 0; pte && l < NB_ENTRIES; l++) {
+                                gva = PGADDR(i, j, k, l, 0);
+                                if (pte[l]) {
+                                    ept_gpa2hva(eptrt, (void *) pte[l], (void **) &hva);
+                                    if (hva) {
+                                        cprintf("map spt GVA: %lx to HVA: %lx\n", gva, hva);
+                                        page_insert(*sptrt, pa2page(PADDR(hva)), gva, PGOFF(pte[l]));
+                                    }
+                                }
                             }
                         }
                     }
@@ -226,6 +236,7 @@ int spt_alloc_from_gmm(spte_t* spte, gmme_t *gmm_map, uint64_t guest_cr3){
             }
         }
     }
+        cprintf("resume\n");
 
     return 0;
 }
