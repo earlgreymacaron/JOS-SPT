@@ -250,7 +250,7 @@ env_guest_alloc(struct Env **newenv_store, envid_t parent_id)
 	memset(p, 0, sizeof(struct PageInfo));
 	p->pp_ref       += 1;
 	e->env_pml4e    = page2kva(p);
-//	e->env_cr3      = page2pa(p);
+	e->env_cr3      = page2pa(p);
 
 	// Allocate a VMCS.
 	struct PageInfo *q = vmx_init_vmcs();

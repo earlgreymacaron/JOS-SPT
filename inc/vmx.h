@@ -7,6 +7,11 @@
 
 #ifndef __ASSEMBLER__
 
+typedef enum {
+    MODE_EPT = 0,
+    MODE_SPT
+} MemoryMode;
+
 struct VmxGuestInfo {
 	int64_t phys_sz;
 	uintptr_t *vmcs;
@@ -21,6 +26,7 @@ struct VmxGuestInfo {
 	uintptr_t *msr_host_area;
 	uintptr_t *msr_guest_area;
 	int vcpunum;
+    MemoryMode mmode;
 };
 
 #endif
@@ -37,6 +43,7 @@ struct VmxGuestInfo {
 #define VMX_VMCALL_ALLOC_CPU 0x7
 #define VMX_VMCALL_GUEST_YIELD 0x8
 #define VMX_VMCALL_CPUNUM 0x9
+#define VMX_VMCALL_SWITCH_MMODE 0xa
 
 #define VMX_HOST_FS_ENV 0x1
 

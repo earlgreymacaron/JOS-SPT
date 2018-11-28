@@ -25,6 +25,7 @@ _head64:
 // VMCALL to the VMM to get a multiboot map.
     movl $VMX_VMCALL_MBMAP, %eax
     vmcall
+
 #endif
 	
     movl $multiboot_info, %eax

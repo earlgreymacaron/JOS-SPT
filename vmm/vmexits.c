@@ -264,6 +264,16 @@ envid_t get_fs_fs(void) {
     return fs_fs;
 }
 
+void vmx_switch_ept(struct Trapframe *tf, struct VmxGuestInfo *gInfo,
+        uint64_t *eptrt) {
+    panic("todo: vmx_swtich_ept");
+}
+
+void vmx_switch_spt(struct Trapframe *tf, struct VmxGuestInfo *gInfo,
+        uint64_t *eptrt) {
+    panic("todo: vmx_swtich_spt");
+}
+
 bool
 handle_ipc_send(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt) {
     envid_t to_env = tf->tf_regs.reg_rbx;
@@ -312,6 +322,7 @@ handle_vmcall(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
 	uint32_t val;
 	// phys address of the multiboot map in the guest.
 	uint64_t multiboot_map_addr = 0x6000;
+    MemoryMode mmode;
 	switch(tf->tf_regs.reg_rax) {
 	case VMX_VMCALL_MBMAP:
 		// Craft a multiboot (e820) memory map for the guest.
@@ -393,6 +404,19 @@ handle_vmcall(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
 		tf->tf_regs.reg_rax = vmdisk_number;
 		handled = true;
 		break;
+    case VMX_VMCALL_SWITCH_MMODE: // switch the memory mode
+        mmode = tf->tf_regs.reg_rbx;
+        switch (mmode) {
+            case MODE_EPT:
+                gInfo->mmode = mmode;
+                vmx_switch_spt(tf, gInfo, eptrt);
+            case MODE_SPT:
+                gInfo->mmode = mmode;
+                vmx_switch_ept(tf, gInfo, eptrt);
+                break;
+            default:
+                panic("Illegal mode");
+        }
          
 	}
 	if(handled) {
