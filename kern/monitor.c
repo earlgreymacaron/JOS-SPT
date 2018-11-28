@@ -240,7 +240,11 @@ monitor(struct Trapframe *tf)
 
 
 	while (1) {
+#ifndef VMM_GUEST
 		buf = readline("K> ");
+#else
+		buf = readline("G> ");
+#endif
 		if (buf != NULL)
 			if (runcmd(buf, tf) < 0)
 				break;
