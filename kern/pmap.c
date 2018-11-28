@@ -561,7 +561,7 @@ page_decref(struct PageInfo* pp)
 //
 
 pte_t *
-pml4e_walk(pml4e_t *pml4e, const void *va, int create)
+pml4e_walk(pml4e_t *pml4e, const void *va, int create, int is_huge_page)
 {
 
 	if (pml4e) {
@@ -571,7 +571,7 @@ pml4e_walk(pml4e_t *pml4e, const void *va, int create)
 			if ((page = page_alloc(ALLOC_ZERO))) {
 				page->pp_ref    += 1;
 				pml4e [PML4(va)] = page2pa(page)|PTE_U|PTE_W|PTE_P;
-				pte_t *pte= pdpe_walk(KADDR((uintptr_t)((pdpe_t *)(PTE_ADDR(pml4e [PML4(va)])))),va,create);
+				pte_t *pte= pdpe_walk(KADDR((uintptr_t)((pdpe_t *)(PTE_ADDR(pml4e [PML4(va)])))),va,create, is_huge_page);
 				if (pte!=NULL) return pte;
 				else{
 					pml4e[PML4(va)] = 0;
@@ -581,7 +581,7 @@ pml4e_walk(pml4e_t *pml4e, const void *va, int create)
 			}else 
 				return NULL;
 		} else if ((uint64_t)pdpe & PTE_P) {
-			return pdpe_walk(KADDR((uintptr_t)((pdpe_t *)PTE_ADDR(pdpe))),va,create);
+			return pdpe_walk(KADDR((uintptr_t)((pdpe_t *)PTE_ADDR(pdpe))),va,create, is_huge_page);
 		}
 	}
 	return NULL;
@@ -594,7 +594,7 @@ pml4e_walk(pml4e_t *pml4e, const void *va, int create)
 // It calls the pgdir_walk which returns the page_table entry pointer.
 // Hints are the same as in pml4e_walk
 pte_t *
-pdpe_walk(pdpe_t *pdpe,const void *va,int create){
+pdpe_walk(pdpe_t *pdpe,const void *va,int create, int is_huge_page){
 
 
 	if (pdpe){
@@ -604,7 +604,7 @@ pdpe_walk(pdpe_t *pdpe,const void *va,int create){
 			if ((page = page_alloc(ALLOC_ZERO))) {
 				page->pp_ref    += 1;
 				pdpe [PDPE(va)] = page2pa(page)|PTE_U|PTE_W|PTE_P;
-				pte_t *pte = pgdir_walk(KADDR((uintptr_t)((pde_t *)PTE_ADDR(pdpe[PDPE(va)]))),va,create);
+				pte_t *pte = pgdir_walk(KADDR((uintptr_t)((pde_t *)PTE_ADDR(pdpe[PDPE(va)]))),va,create, is_huge_page);
 				if (pte!=NULL) return pte;
 				else{
 					pdpe[PDPE(va)] = 0;
@@ -614,7 +614,7 @@ pdpe_walk(pdpe_t *pdpe,const void *va,int create){
 			}else
 				return NULL;
 		}else if((uint64_t)pdp & PTE_P){
-			return pgdir_walk(KADDR((uintptr_t)((pde_t *)PTE_ADDR(pdp))),va,create);
+			return pgdir_walk(KADDR((uintptr_t)((pde_t *)PTE_ADDR(pdp))),va,create, is_huge_page);
 		}
 	}
 	return NULL;
@@ -626,9 +626,15 @@ pdpe_walk(pdpe_t *pdpe,const void *va,int create){
 // and pdpe_walk.
 
 pte_t *
-pgdir_walk(pde_t *pgdir, const void *va, int create)
+pgdir_walk(pde_t *pgdir, const void *va, int create, int is_huge_page)
 {
-
+  if (is_huge_page) {
+      void *hpage = NULL;
+      hpage = (void *) pgdir[PDX(va)];
+      if ((uintptr_t) hpage & PTE_P) {
+          return KADDR((uintptr_t)(&hpage));
+      }
+  } else {
 	if (pgdir) {
 		pte_t *pte  = (pte_t *)pgdir [PDX(va)];
 		if (!((physaddr_t)pte & PTE_P) && create) {
@@ -644,8 +650,8 @@ pgdir_walk(pde_t *pgdir, const void *va, int create)
 			return KADDR((uintptr_t)((pte_t *)PTE_ADDR(pte) + PTX(va)));
 		}
 	}
+  }
 	return NULL;
-
 }
 
 //
@@ -667,7 +673,7 @@ boot_map_region(pml4e_t *pml4e, uintptr_t la, size_t size, physaddr_t pa, int pe
 	pde_t *pde;
 	//cprintf("mapping %x at %x (size: %x)\n", la, pa, size);
 	for (i = 0; i < size; i+=PGSIZE) {
-		pte_t *pte      = pml4e_walk(pml4e, (void *)(la + i), 1);
+		pte_t *pte      = pml4e_walk(pml4e, (void *)(la + i), 1, 0);
 		physaddr_t addr = pa + i;
 		if (pte != NULL) {
 			*pte    = PTE_ADDR(addr)|perm|PTE_P;
@@ -713,7 +719,7 @@ page_insert(pml4e_t *pml4e, struct PageInfo *pp, void *va, int perm)
 	pdpe_t *pdpe;
 	pde_t *pde;
 	if (pml4e && pp) {
-		pte_t *pte  = pml4e_walk(pml4e, va, 1);
+		pte_t *pte  = pml4e_walk(pml4e, va, 1, 0);
 		if (pte != NULL) {
 			pml4e [PML4(va)] = pml4e [PML4(va)]|(perm&(~PTE_AVAIL));
 			pdpe = (pdpe_t *)KADDR(PTE_ADDR(pml4e[PML4(va)]));
@@ -738,6 +744,41 @@ page_insert(pml4e_t *pml4e, struct PageInfo *pp, void *va, int perm)
 
 }
 
+// page_insert for 4MB size pages
+// Skips the last translation
+int
+huge_page_insert(pml4e_t *pml4e, struct PageInfo *pp, void *va, int perm)
+{
+
+	pdpe_t *pdpe;
+  pde_t *pde;      // pd entry containing pointer to the huge page
+	if (pml4e && pp) {
+		pde = pml4e_walk(pml4e, va, 1, 1);
+		if (pde != NULL) {
+			pml4e[PML4(va)] = pml4e [PML4(va)]|(perm&(~PTE_AVAIL));
+			pdpe = (pdpe_t *)KADDR(PTE_ADDR(pml4e[PML4(va)]));
+			pdpe[PDPE(va)] = pdpe[PDPE(va)]|(perm&(~PTE_AVAIL));
+
+			if ((*pde & PTE_P) && (page2pa(pp) == PTE_ADDR(*pde))) {
+        // if there is already a mapping, reset permission
+				*pde = PTE_ADDR(*pde)|perm|PTE_P;
+				tlb_invalidate(pml4e, va);
+				return 0;
+			} else if (*pde & PTE_P) {
+				page_remove(pml4e, va);
+			}
+
+			pp->pp_ref  += 1;
+			*pde = page2pa(pp)|perm|PTE_P;
+			tlb_invalidate(pml4e, va);
+			return 0;
+		} else
+			return -E_NO_MEM;
+	}
+	return -E_NO_MEM;
+
+}
+
 //
 // Return the page mapped at virtual address 'va'.
 // If pte_store is not zero, then we store in it the address
@@ -754,7 +795,7 @@ page_lookup(pml4e_t *pml4e, void *va, pte_t **pte_store)
 {
 
 	if (pml4e != NULL) {
-		pte_t *pte  = pml4e_walk(pml4e, va, 0);
+		pte_t *pte  = pml4e_walk(pml4e, va, 0, 0);
 		if (pte != NULL && (*pte & PTE_P)) {
 			if (pte_store)
 				*pte_store  = pte;
@@ -886,7 +927,7 @@ user_mem_check(struct Env *env, const void *va, size_t len, int perm)
 		return -E_FAULT;
 	}
 	while(va<endva){
-		ptep = pml4e_walk(env->env_pml4e,va,0);
+		ptep = pml4e_walk(env->env_pml4e,va,0, 0);
 		if (!ptep || (*ptep & (perm | PTE_P)) != (perm | PTE_P)) {
 			user_mem_check_addr = (uintptr_t) va;
 			return -E_FAULT;
@@ -1250,13 +1291,13 @@ page_check(void)
 	pdpe = KADDR(PTE_ADDR(boot_pml4e[PML4(PGSIZE)]));
 	pde = KADDR(PTE_ADDR(pdpe[PDPE(PGSIZE)]));
 	ptep = KADDR(PTE_ADDR(pde[PDX(PGSIZE)]));
-	assert(pml4e_walk(boot_pml4e, (void*)PGSIZE, 0) == ptep+PTX(PGSIZE));
+	assert(pml4e_walk(boot_pml4e, (void*)PGSIZE, 0, 0) == ptep+PTX(PGSIZE));
 
 	// should be able to change permissions too.
 	assert(page_insert(boot_pml4e, pp3, (void*) PGSIZE, PTE_U) == 0);
 	assert(check_va2pa(boot_pml4e, PGSIZE) == page2pa(pp3));
 	assert(pp3->pp_ref == 2);
-	assert(*pml4e_walk(boot_pml4e, (void*) PGSIZE, 0) & PTE_U);
+	assert(*pml4e_walk(boot_pml4e, (void*) PGSIZE, 0, 0) & PTE_U);
 	assert(boot_pml4e[0] & PTE_U);
 
 
@@ -1265,7 +1306,7 @@ page_check(void)
 
 	// insert pp1 at PGSIZE (replacing pp3)
 	assert(page_insert(boot_pml4e, pp1, (void*) PGSIZE, 0) == 0);
-	assert(!(*pml4e_walk(boot_pml4e, (void*) PGSIZE, 0) & PTE_U));
+	assert(!(*pml4e_walk(boot_pml4e, (void*) PGSIZE, 0, 0) & PTE_U));
 
 	// should have pp1 at both 0 and PGSIZE
 	assert(check_va2pa(boot_pml4e, 0) == page2pa(pp1));
@@ -1322,7 +1363,7 @@ page_check(void)
 	if (pp_l1 != pp2) page_decref(pp2);
 	if (pp_l1 != pp0) page_decref(pp0);
 	va = (void*)(PGSIZE * 100);
-	ptep = pml4e_walk(boot_pml4e, va, 1);
+	ptep = pml4e_walk(boot_pml4e, va, 1, 0);
 	pdpe = KADDR(PTE_ADDR(boot_pml4e[PML4(va)]));
 	pde  = KADDR(PTE_ADDR(pdpe[PDPE(va)]));
 	ptep1 = KADDR(PTE_ADDR(pde[PDX(va)]));
@@ -1330,7 +1371,7 @@ page_check(void)
 
 	// check that new page tables get cleared
 	memset(page2kva(pp4), 0xFF, PGSIZE);
-	pml4e_walk(boot_pml4e, 0x0, 1);
+	pml4e_walk(boot_pml4e, 0x0, 1, 0);
 	pdpe = KADDR(PTE_ADDR(boot_pml4e[0]));
 	pde  = KADDR(PTE_ADDR(pdpe[0]));
 	ptep  = KADDR(PTE_ADDR(pde[0]));
@@ -1372,12 +1413,12 @@ page_check(void)
 	assert(check_va2pa(boot_pml4e, mm2) == 0);
 	assert(check_va2pa(boot_pml4e, mm2+PGSIZE) == ~0);
 	// check permissions
-	assert(*pml4e_walk(boot_pml4e, (void*) mm1, 0) & (PTE_W|PTE_PWT|PTE_PCD));
-	assert(!(*pml4e_walk(boot_pml4e, (void*) mm1, 0) & PTE_U));
+	assert(*pml4e_walk(boot_pml4e, (void*) mm1, 0, 0) & (PTE_W|PTE_PWT|PTE_PCD));
+	assert(!(*pml4e_walk(boot_pml4e, (void*) mm1, 0, 0) & PTE_U));
 	// clear the mappings
-	*pml4e_walk(boot_pml4e, (void*) mm1, 0) = 0;
-	*pml4e_walk(boot_pml4e, (void*) mm1 + PGSIZE, 0) = 0;
-	*pml4e_walk(boot_pml4e, (void*) mm2, 0) = 0;
+	*pml4e_walk(boot_pml4e, (void*) mm1, 0, 0) = 0;
+	*pml4e_walk(boot_pml4e, (void*) mm1 + PGSIZE, 0, 0) = 0;
+	*pml4e_walk(boot_pml4e, (void*) mm2, 0, 0) = 0;
 
 
 	cprintf("check_page() succeeded!\n");

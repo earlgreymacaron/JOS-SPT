@@ -218,15 +218,24 @@ int spt_alloc_from_ept(spte_t **sptrt, epte_t *eptrt, uint64_t guest_cr3){
                     cprintf("pdpe %d alloc @ (GPA: %lx, HVA: %lx)\n", j, pdpe[i], pgdir);
                     for (k = 0; pgdir && k < NB_ENTRIES; k++) {
                         if (pgdir[k]) {
-                            ept_gpa2hva(eptrt, (void *) pgdir[k], (void **) &pte);
-                            cprintf("pgdir %d GPA: %lx -> HVA: %lx\n", k, pgdir[k], pte);
-                            for (l = 0; pte && l < NB_ENTRIES; l++) {
-                                gva = PGADDR(i, j, k, l, 0);
-                                if (pte[l]) {
-                                    ept_gpa2hva(eptrt, (void *) pte[l], (void **) &hva);
-                                    if (hva) {
-                                        cprintf("map spt GVA: %lx to HVA: %lx\n", gva, hva);
-                                        page_insert(*sptrt, pa2page(PADDR(hva)), gva, PGOFF(pte[l]));
+                            // Check if 4MB pages are being used
+                            if (pgdir[k] && PTE_PS) {
+                                ept_gpa2hva(eptrt, (void *) pgdir[k], (void **) &hva);
+                                if (hva) {
+                                    cprintf("map spt GVA: %lx to HVA: %lx (huge) \n", gva, hva);
+                                    huge_page_insert(*sptrt, pa2page(PADDR(hva)), gva, PGOFF(pgdir[k]));
+                                }
+                            } else {
+                                ept_gpa2hva(eptrt, (void *) pgdir[k], (void **) &pte);
+                                cprintf("pgdir %d GPA: %lx -> HVA: %lx\n", k, pgdir[k], pte);
+                                for (l = 0; pte && l < NB_ENTRIES; l++) {
+                                    gva = PGADDR(i, j, k, l, 0);
+                                    if (pte[l]) {
+                                        ept_gpa2hva(eptrt, (void *) pte[l], (void **) &hva);
+                                        if (hva) {
+                                            cprintf("map spt GVA: %lx to HVA: %lx\n", gva, hva);
+                                            page_insert(*sptrt, pa2page(PADDR(hva)), gva, PGOFF(pte[l]));
+                                        }
                                     }
                                 }
                             }
