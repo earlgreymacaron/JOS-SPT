@@ -19,6 +19,12 @@
 #include <kern/env.h>
 #include <kern/cpu.h>
 
+typedef void (*FUNC2)(struct VmxGuestInfo *, void *);
+#define NULLFUNC2 ((FUNC2) NULL)
+
+typedef void (*FUNC1)(struct VmxGuestInfo *, uint64_t *, pte_t *);
+#define NULLFUNC1 ((FUNC1) NULL)
+
 bool
 insert_ept_entry (uint64_t *eptrt, uint64_t gpa, struct VmxGuestInfo *ginfo);
 void 
@@ -67,49 +73,53 @@ handle_interrupt_window(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint32
 
 #define IS_P(x) ((uint64_t)x & PTE_P)
 
-#define FOR_EACH_PTE(ginfo, eptrt, ptrt, function, aux, ___i, __i, _i) \
+#define FOR_EACH_PTE(ginfo, eptrt, ptrt, func1, func2, func_choice, ___i, __i, _i) \
     int64_t i4;\
     pte_t *pte, *gpte; \
     for (i4 = 0; i4 < (1 << 9); i4++) { \
         gpte = (pte_t *)ptrt[i4]; \
         if (IS_P(gpte)) { \
             ept_gpa2hva(eptrt, (void *) gpte, (void **) &pte); \
-            function(ginfo, eptrt, pte, PGADDR(___i, __i, _i, i4, 0), gpte, aux);\
+            if (func_choice == 1) \
+                func1(ginfo, eptrt, pte, PGADDR(___i, __i, _i, i4, 0), gpte);\
         } \
-    }
+    } \
 
-#define FOR_EACH_PDE(ginfo, eptrt, pdrt, function, aux, __i, _i) \
+#define FOR_EACH_PDE(ginfo, eptrt, pdrt, func1, func2, func_choice, __i, _i) \
     int64_t i3; \
     pde_t *ptrt, *gpde; \
     for (i3 = 0; i3 < (1 << 9); i3++) { \
         gpde = (pde_t *)pdrt[i3]; \
         if (IS_P(gpde)) { \
             ept_gpa2hva(eptrt, (void *) gpde, (void **) &ptrt); \
-            FOR_EACH_PTE(ginfo, eptrt, ptrt, function, aux, __i, _i, i3); \
+            if (func_choice == 2) func2(ginfo, gpde); \
+            FOR_EACH_PTE(ginfo, eptrt, ptrt, func1, func2, func_choice, __i, _i, i3); \
         } \
-    }
+    } \
 
-#define FOR_EACH_PDPE(ginfo, eptrt, pdprt, function, aux, _i) \
+#define FOR_EACH_PDPE(ginfo, eptrt, pdprt, func1, func2, func_choice, _i) \
     int64_t i2; \
     pdpe_t *pdrt, *gpdpe; \
     for (i2 = 0; i2 < (1 << 9); i2++) { \
         gpdpe = (pdpe_t *)pdprt[i2]; \
         if (IS_P(gpdpe)) { \
             ept_gpa2hva(eptrt, (void *) gpdpe, (void **) &pdrt); \
-            FOR_EACH_PDE(ginfo, eptrt, pdrt, function, aux, _i, i2); \
+            if (func_choice == 2) func2(ginfo, gpdpe); \
+            FOR_EACH_PDE(ginfo, eptrt, pdrt, func1, func2, func_choice, _i, i2); \
         } \
     } \
 
-#define FOR_EACH_PML4E(ginfo, eptrt, pml4rt, function, aux) \
+#define FOR_EACH_PML4E(ginfo, eptrt, pml4rt, func1, func2, func_choice) \
     int64_t i1; \
     pml4e_t *pdprt, *gpml4e; \
     for (i1 = 0; i1 < (1 << 9); i1++) { \
         gpml4e = (pml4e_t *)pml4rt[i1]; \
         if (IS_P(gpml4e)) { \
             ept_gpa2hva(eptrt, (void *) gpml4e, (void **) &pdprt); \
-            FOR_EACH_PDPE(ginfo, eptrt, pdprt, function, aux, i1); \
+            if (func_choice == 2) func2(ginfo, gpml4e); \
+            FOR_EACH_PDPE(ginfo, eptrt, pdprt, func1, func2, func_choice, i1); \
         } \
-    }
+    } \
 
 uintptr_t
 gva2hva(struct VmxGuestInfo *ginfo, uint64_t *eptrt, uintptr_t gva, physaddr_t *_gpa) {
@@ -145,16 +155,31 @@ gva2hva(struct VmxGuestInfo *ginfo, uint64_t *eptrt, uintptr_t gva, physaddr_t *
     return 0;
 }
 
+
+// Set gpa in guest of ginfo as write protect
 void
-write_protect(struct VmxGuestInfo *ginfo, uint64_t *eptrt, void *entry_gva, int perm) {
-    pml4e_t *sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
+write_protect(struct VmxGuestInfo *ginfo, void *gpa) {
+    pml4e_t *sptrt;
+    void *gva;
+    pte_t *spte; // spt entry that contains gva for
+
+    sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
+
+    // Get gva from gpa with rmap
+    gva = (void *) pml4e_walk(ginfo->rmap, gpa, 0);
+
+    // Find the entry for gva in SPT
+    spte = pml4e_walk(sptrt, gva, 0);
+
+    // Remove write permission from the entry
+    *spte = *spte & ~PTE_W;
 }
 
 void
 add_pte(struct VmxGuestInfo *ginfo, uint64_t *eptrt, pte_t *pte,
-        void *gva, pte_t *gpte, void *aux) {
+        void *gva, pte_t *gpte) {
     pml4e_t *sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
-    pml4e_t *rmap = (pml4e_t *)aux;
+    pml4e_t *rmap = (pml4e_t *) ginfo->rmap;
     int perm = PGOFF(gpte);
     if (pte) {
         physaddr_t hpa = (physaddr_t) PADDR(pte);
@@ -191,7 +216,8 @@ build_spt(struct VmxGuestInfo *gInfo, uint64_t *eptrt) {
     pml4e_t *pml4e;
     if (vmx_setup_sptrt(gInfo, vmcs_read64(VMCS_GUEST_CR3))) {
         ept_gpa2hva(eptrt, (void *) gInfo->gcr3, (void **) &pml4e);
-        FOR_EACH_PML4E(gInfo, eptrt, pml4e, add_pte, gInfo->rmap);
+        {FOR_EACH_PML4E(gInfo, eptrt, pml4e, add_pte, write_protect, 1);}
+        {FOR_EACH_PML4E(gInfo, eptrt, pml4e, add_pte, write_protect, 2);}
     }
     return true;
 }
@@ -209,7 +235,7 @@ handle_pf(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint64_t *eptrt) {
         //cprintf("%lx\n", gpa);
         insert_ept_entry(eptrt, gpa, ginfo);
         ept_gpa2hva(eptrt, (void *) gpa, (void **) &va);
-        add_pte(ginfo, eptrt, va, (pte_t *)PTE_ADDR(fault_addr), (pte_t *)gpa, ginfo->rmap);
+        add_pte(ginfo, eptrt, va, (pte_t *)PTE_ADDR(fault_addr), (pte_t *)gpa);
         return true;
     }
     return false;
