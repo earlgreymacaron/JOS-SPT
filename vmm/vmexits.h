@@ -9,4 +9,6 @@ bool handle_rdmsr(struct Trapframe *tf, struct VmxGuestInfo *ginfo);
 bool handle_wrmsr(struct Trapframe *tf, struct VmxGuestInfo *ginfo);
 bool handle_ioinstr(struct Trapframe *tf, struct VmxGuestInfo *ginfo);
 bool handle_cpuid(struct Trapframe *tf, struct VmxGuestInfo *ginfo);
+bool handle_mov_cr(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt);
 bool handle_vmcall(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt );
+bool handle_invlpg(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt);

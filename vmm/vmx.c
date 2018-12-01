@@ -628,9 +628,12 @@ void vmexit() {
 				curenv->env_pml4e);
 		break;
         case EXIT_REASON_MOV_CR:
-            panic("CR3");
-//            exit_handled = handle_mov_cr(&curenv->env_tf, &curenv->env_vmxinfo,
-//                    curenv->env_pml4e);
+            exit_handled = handle_mov_cr(&curenv->env_tf, &curenv->env_vmxinfo,
+                    curenv->env_pml4e);
+            break;
+        case EXIT_REASON_INVLPG:
+            exit_handled = handle_invlpg(&curenv->env_tf, &curenv->env_vmxinfo,
+                    curenv->env_pml4e);
             break;
 				case EXIT_REASON_HLT:
 		cprintf("\nHLT in guest, exiting guest.\n");

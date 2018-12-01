@@ -104,12 +104,23 @@ handle_pf(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint64_t *eptrt) {
     return false;
 }
 
+//bool
+//for_each_pdpe(struct VmxGuestInfo *ginfo, uint64_t *eptrt, pml4e_t *pml4e) {
+//    for (int i = 0; i < (1 << 9); i++) {
+//        gpdpe = pml4e[i];
+//        if (gpdpe & PTE_P) {
+//            ept_gpa2hva(eptrt, (void *) gpdpe, (void **) &pdpe);
+//            
+//        }
+//    }
+//}
+
 bool
 handle_nmi(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint64_t *eptrt,
            uint32_t intr_info) {
     uint32_t vector = intr_info & 0xff;
     switch (vector) {
-        case 14: return handle_pf(tf, ginfo, eptrt);
+        case 0xe: return handle_pf(tf, ginfo, eptrt);
         default:
             return false;
     }
@@ -635,14 +646,11 @@ handle_mov_cr(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
     pml4e_t *sptrt;
 
     switch (reason & VMX_CR_REASON_MASK) {
-        case VMEXIT_CR3_READ:
+        case VMEXIT_CR3_WRITE:
             // get gcr3 and translated to gpa and then write it to value
             *src = (uint64_t) gInfo->gcr3;
             break;
-        case VMEXIT_CR3_WRITE:
-            // Update guest's gcr3
-            gInfo->gcr3 = (physaddr_t *) *src;
-
+        case VMEXIT_CR3_READ:
             // free spt that was currently being used
             sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
             free_spt_level(sptrt, 3);
@@ -651,11 +659,12 @@ handle_mov_cr(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
 
             // flush tlb
             tlbflush();
+            if ((new_page = vmx_setup_sptrt(gInfo)) == NULL) {
+                return 0;
+            }
+            // Update guest's gcr3
+            gInfo->gcr3 = (physaddr_t *) *src;
 
-            // create new spt root page and write it to guest_cr3
-            new_page = page_alloc(ALLOC_ZERO);
-            if (!new_page) return -E_NO_MEM;
-            new_page->pp_ref++;
             vmcs_write64(VMCS_GUEST_CR3, (uint64_t) page2pa(new_page));
             break;
         default:
@@ -663,4 +672,14 @@ handle_mov_cr(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
     }
     tf->tf_rip += vmcs_read32(VMCS_32BIT_VMEXIT_INSTRUCTION_LENGTH);
     return 1;
+}
+
+bool
+handle_invlpg(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt) {
+    uint64_t gaddr = vmcs_read64(VMCS_VMEXIT_QUALIFICATION);
+    uint64_t haddr;
+    ept_gpa2hva(eptrt, (void *) gaddr, (void **) &haddr);
+    invlpg((void *)haddr);
+    tf->tf_rip += vmcs_read32(VMCS_32BIT_VMEXIT_INSTRUCTION_LENGTH);
+    return true;
 }
