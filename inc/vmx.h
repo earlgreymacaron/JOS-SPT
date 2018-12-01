@@ -7,6 +7,7 @@
 
 #ifndef __ASSEMBLER__
 #include <inc/types.h>
+#include <inc/memlayout.h>
 typedef enum {
     MODE_EPT = 0,
     MODE_SPT
@@ -27,7 +28,8 @@ struct VmxGuestInfo {
 	uintptr_t *msr_guest_area;
 	int vcpunum;
     MemoryMode mmode;
-    physaddr_t *gcr3; // hold the gpa
+    physaddr_t gcr3; // hold the gpa
+    pml4e_t *rmap; // reverse map: gpa -> gva
 };
 
 #endif
