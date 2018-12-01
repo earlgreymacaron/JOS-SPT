@@ -20,6 +20,8 @@
 
 bool
 insert_ept_entry (uint64_t *eptrt, uint64_t gpa, struct VmxGuestInfo *ginfo);
+void 
+free_spt_level(pml4e_t* sptrt, int level);
 
 static int vmdisk_number = 0;	//this number assign to the vm
 int 
@@ -590,6 +592,30 @@ uint64_t *decode_register(struct Trapframe *tf, int r) {
     }
 }
 
+
+void free_spt_level(pml4e_t* sptrt, int level) {
+    pml4e_t* dir = sptrt;
+    physaddr_t hpa;
+    int i;
+
+    for(i=0; i<NPTENTRIES; ++i) {
+        if(level) {
+            if(dir[i] & PTE_P) {
+                hpa = PTE_ADDR(dir[i]);
+                free_spt_level((pml4e_t*) KADDR(hpa), level-1);
+                page_decref(pa2page(hpa));
+            }
+        } else { // Last level - no more recursive calls
+            if(dir[i] & PTE_P) {
+                hpa = PTE_ADDR(dir[i]);
+                page_decref(pa2page(hpa));
+            }
+        }
+    }
+    return;
+}
+
+
  /* 11:8 - general purpose register operand */
 #define VMX_REG_ACCESS_GPR(eq)  (((eq) >> 8) & 0xf)
 #define VMX_CR_REASON_MASK 0x3f
@@ -599,15 +625,37 @@ handle_mov_cr(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
     uint32_t reason = vmcs_readl(VMCS_VMEXIT_QUALIFICATION);
     uint32_t gpr = VMX_REG_ACCESS_GPR(reason);
     uint64_t *src = decode_register(tf, gpr);
+    physaddr_t new_cr3;
+    struct PageInfo *new_page;
+    pml4e_t *sptrt;
+
     switch (reason & VMX_CR_REASON_MASK) {
         case VMEXIT_CR3_READ:
             // get gcr3 and translated to gpa and then write it to value
+            *src = (uint64_t) gInfo->gcr3;
             break;
         case VMEXIT_CR3_WRITE:
-            // get gpa and generate new spt and write it to gcr3
+            // Update guest's gcr3
+            gInfo->gcr3 = (physaddr_t *) *src;
+
+            // free spt that was currently being used
+            sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
+            free_spt_level(sptrt, 3);
+            // free the spt root page
+            page_decref(pa2page(PADDR(sptrt)));
+
+            // flush tlb
+            tlbflush();
+
+            // create new spt root page and write it to guest_cr3
+            new_page = page_alloc(ALLOC_ZERO);
+            if (!new_page) return -E_NO_MEM;
+            new_page->pp_ref++;
+            vmcs_write64(VMCS_GUEST_CR3, (uint64_t) page2pa(new_page));
             break;
         default:
             return 0;
     }
+    tf->tf_rip += vmcs_read32(VMCS_32BIT_VMEXIT_INSTRUCTION_LENGTH);
     return 1;
 }
