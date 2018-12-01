@@ -744,39 +744,29 @@ page_insert(pml4e_t *pml4e, struct PageInfo *pp, void *va, int perm)
 
 }
 
-// page_insert for 4MB size pages
-// Skips the last translation
 int
-huge_page_insert(pml4e_t *pml4e, struct PageInfo *pp, void *va, int perm)
+rmap_insert(pml4e_t *pml4e, void *pa, void *va, int perm)
 {
-
-	pdpe_t *pdpe;
-  pde_t *pde;      // pd entry containing pointer to the huge page
-	if (pml4e && pp) {
-		pde = pml4e_walk(pml4e, va, 1, 1);
-		if (pde != NULL) {
-			pml4e[PML4(va)] = pml4e [PML4(va)]|(perm&(~PTE_AVAIL));
-			pdpe = (pdpe_t *)KADDR(PTE_ADDR(pml4e[PML4(va)]));
-			pdpe[PDPE(va)] = pdpe[PDPE(va)]|(perm&(~PTE_AVAIL));
-
-			if ((*pde & PTE_P) && (page2pa(pp) == PTE_ADDR(*pde))) {
-        // if there is already a mapping, reset permission
-				*pde = PTE_ADDR(*pde)|perm|PTE_P;
-				tlb_invalidate(pml4e, va);
-				return 0;
-			} else if (*pde & PTE_P) {
-				page_remove(pml4e, va);
-			}
-
-			pp->pp_ref  += 1;
-			*pde = page2pa(pp)|perm|PTE_P;
-			tlb_invalidate(pml4e, va);
-			return 0;
-		} else
-			return -E_NO_MEM;
-	}
-	return -E_NO_MEM;
-
+    pdpe_t *pdpe;
+    pde_t *pde;
+    if (pml4e) {
+        pte_t *pte  = pml4e_walk(pml4e, pa, 1, 0);
+        if (pte != NULL) {
+            pml4e [PML4(pa)] = pml4e [PML4(pa)]|(perm&(~PTE_AVAIL));
+            pdpe = (pdpe_t *)KADDR(PTE_ADDR(pml4e[PML4(pa)]));
+            pdpe[PDPE(pa)] = pdpe[PDPE(pa)]|(perm&(~PTE_AVAIL));
+            pde = (pde_t *)KADDR(PTE_ADDR(pdpe[PDPE(pa)]));
+            pde[PDX(pa)] = pde[PDX(pa)]|(perm&(~PTE_AVAIL));
+            if ((*pte & PTE_P) && ((uint64_t)pa == PTE_ADDR(*pte))) {
+                *pte    = PTE_ADDR(*pte)|perm|PTE_P;
+                return 0;
+            }
+            *pte    = (uint64_t) va | perm | PTE_P;
+            return 0;
+        } else
+            return -E_NO_MEM;
+    }
+    return -E_NO_MEM;
 }
 
 //
