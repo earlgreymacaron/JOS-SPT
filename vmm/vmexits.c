@@ -396,6 +396,14 @@ void vmx_switch_spt(struct Trapframe *tf, struct VmxGuestInfo *gInfo,
 
 }
 
+struct PageInfo *vmx_setup_sptrt(struct VmxGuestInfo *gInfo) {
+    assert(gInfo->mmode == MODE_SPT);
+    gInfo->gcr3 = (physaddr_t *)vmcs_read64(VMCS_GUEST_CR3);
+    struct PageInfo *new_page = page_alloc(ALLOC_ZERO);
+    if (!new_page) return NULL;
+    new_page->pp_ref++;
+    return new_page;
+}
 
 bool
 handle_ipc_send(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt) {
@@ -543,10 +551,7 @@ handle_vmcall(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
                 case MODE_SPT:
                     gInfo->mmode = mmode;
                     vmx_switch_spt(tf, gInfo, eptrt);
-                    gInfo->gcr3 = (physaddr_t *)vmcs_read64(VMCS_GUEST_CR3);
-                    new_page = page_alloc(ALLOC_ZERO);
-                    if (!new_page) return -E_NO_MEM;
-                    new_page->pp_ref++;
+                    handled = ((new_page = vmx_setup_sptrt(gInfo)) == NULL);
                     vmcs_write64(VMCS_GUEST_CR3, (uint64_t) page2pa(new_page));
                     break;
                 default:
