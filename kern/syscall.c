@@ -380,11 +380,29 @@ sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)
 		// TODO: Fix permissions.
 #ifndef VMM_GUEST
 		r = ept_page_insert(e->env_pml4e, pp, e->env_ipc_dstva, __EPTE_FULL);
-        struct VmxGuestInfo *ginfo = &e->env_vmxinfo;
-        pte_t gva = gpa2gva(ginfo, e->env_ipc_dstva);
-        // TODO: update spt
+        struct VmxGuestInfo *ginfo;
+        pte_t *gpte;
+        void *hva, *gpa, *gva, *gpml4rt;
+        pml4e_t *sptrt;
+
+        gpa = e->env_ipc_dstva;
+        ginfo = &e->env_vmxinfo;
+
+        // Get GVA and HVA of dstva
+        gva = (void *) pml4e_walk(ginfo->rmap, gpa, 0);
+        ept_gpa2hva(e->env_pml4e, gpa, &hva);
+
+        // Get guest pml4rt in KADDR
+        ept_gpa2hva(e->env_pml4e, (void *) ginfo->gcr3, &gpml4rt);
+
+        // Get correspoding pte_t in Guest PT for gva
+        gpte = (pte_t *) pml4e_walk(gpml4rt, gva, 0);
+
+        // Update SPT
+        sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
+        page_insert(sptrt, pa2page(PADDR(hva)), (void *)ROUNDDOWN(gva, PGSIZE), PGOFF(*gpte));
 #endif
-    
+
 	} else if (srcva < (void*) UTOP && e->env_ipc_dstva < (void*) UTOP) {
 
 			if ((~perm & (PTE_U|PTE_P)) || (perm & ~PTE_SYSCALL)) {
