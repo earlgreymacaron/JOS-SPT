@@ -708,16 +708,29 @@ int
 page_insert(pml4e_t *pml4e, struct PageInfo *pp, void *va, int perm)
 {
 
+#ifdef VMM_GUEST
+//#define DBG(...) cprintf(__VA_ARGS__);
+#define DBG(...) ;
+#else
+#define DBG(...) ;
+#endif
+
 	pdpe_t *pdpe;
 	pde_t *pde;
 	if (pml4e && pp) {
 		pte_t *pte  = pml4e_walk(pml4e, va, 1);
 		if (pte != NULL) {
+            DBG("pml4ewrite: %lx %lx\n", pml4e, PADDR(pml4e));
 			pml4e [PML4(va)] = pml4e [PML4(va)]|(perm&(~PTE_AVAIL));
+            DBG("pml4ewrite done\n");
 			pdpe = (pdpe_t *)KADDR(PTE_ADDR(pml4e[PML4(va)]));
+            DBG("pdpewrite: %lx %lx\n", pdpe, PADDR(pdpe));
 			pdpe[PDPE(va)] = pdpe[PDPE(va)]|(perm&(~PTE_AVAIL));
+            DBG("pdpewrite done\n");
 			pde = (pde_t *)KADDR(PTE_ADDR(pdpe[PDPE(va)]));
+            DBG("pdewrite: %lx %lx\n", pde, PADDR(pde));
 			pde[PDX(va)] = pde[PDX(va)]|(perm&(~PTE_AVAIL));
+            DBG("pdewrite done\n");
 			if ((*pte & PTE_P) && (page2pa(pp) == PTE_ADDR(*pte))) {
 				*pte    = PTE_ADDR(*pte)|perm|PTE_P;
 				tlb_invalidate(pml4e, va);
@@ -726,7 +739,9 @@ page_insert(pml4e_t *pml4e, struct PageInfo *pp, void *va, int perm)
 				page_remove(pml4e, va);
 			}
 			pp->pp_ref  += 1;
+            DBG("ptewrite: %lx\n", PADDR(PTE_ADDR(pte)));
 			*pte    = page2pa(pp)|perm|PTE_P;
+            DBG("ptewrite done\n");
 			tlb_invalidate(pml4e, va);
 			return 0;
 		}else

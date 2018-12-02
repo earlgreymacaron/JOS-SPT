@@ -24,6 +24,8 @@ insert_ept_entry (uint64_t *eptrt, uint64_t gpa, struct VmxGuestInfo *ginfo);
 void free_spt_level(pml4e_t* sptrt, int level);
 void free_rmap_level(pml4e_t* rmap, int level);
 
+uint64_t *eptrt_;
+
 static int vmdisk_number = 0;	//this number assign to the vm
 int 
 vmx_get_vmdisk_number() {
@@ -67,53 +69,82 @@ handle_interrupt_window(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint32
 
 #define IS_P(x) ((uint64_t)x & PTE_P)
 
-#define FOR_EACH_PTE(ginfo, eptrt, ptrt, func1, func2, func_choice, ___i, __i, _i) \
-    int64_t i4;\
-    pte_t *pte, *gpte; \
-    for (i4 = 0; i4 < (1 << 9); i4++) { \
-        gpte = (pte_t *)ptrt[i4]; \
-        if (IS_P(gpte)) { \
-            ept_gpa2hva(eptrt, (void *) gpte, (void **) &pte); \
-            if (func_choice == 1) \
-                func1(ginfo, eptrt, pte, PGADDR(___i, __i, _i, i4, 0), gpte);\
-        } \
-    } \
+void
+FOR_EACH_PTE(struct VmxGuestInfo *ginfo, uint64_t *eptrt, uint64_t *ptrt,
+    void (*func1)(struct VmxGuestInfo *, uint64_t *, pte_t *, void *, pte_t *, int),
+    void (*func2)(struct VmxGuestInfo *, void *), int func_choice,
+    int perm, uint64_t ___i, uint64_t __i, uint64_t _i) {
+    int64_t i4;
+    pte_t *pte, *gpte;
+    for (i4 = 0; i4 < (1 << 9); i4++) {
+        gpte = (pte_t *)ptrt[i4];
+        if (IS_P(gpte)) {
+            ept_gpa2hva(eptrt, (void *) gpte, (void **) &pte);
+            if (func_choice == 1) {
+                func1(ginfo, eptrt, pte, PGADDR(___i, __i, _i, i4, 0), gpte, perm & PGOFF(gpte));
+            }
+        }
+    }
+}
 
-#define FOR_EACH_PDE(ginfo, eptrt, pdrt, func1, func2, func_choice, __i, _i) \
-    int64_t i3; \
-    pde_t *ptrt, *gpde; \
-    for (i3 = 0; i3 < (1 << 9); i3++) { \
-        gpde = (pde_t *)pdrt[i3]; \
-        if (IS_P(gpde)) { \
-            ept_gpa2hva(eptrt, (void *) gpde, (void **) &ptrt); \
-            if (func_choice == 2) { cprintf("pdrt: %lx \n", gpde);func2(ginfo, gpde); }\
-            FOR_EACH_PTE(ginfo, eptrt, ptrt, func1, func2, func_choice, __i, _i, i3); \
-        } \
-    } \
+void
+FOR_EACH_PDE(struct VmxGuestInfo *ginfo, uint64_t *eptrt, uint64_t *pdrt,
+    void (*func1)(struct VmxGuestInfo *, uint64_t *, pte_t *, void *, pte_t *, int),
+    void (*func2)(struct VmxGuestInfo *, void *), int func_choice,
+    int perm, uint64_t __i, uint64_t _i) {
+    uint64_t i3;
+    pde_t *ptrt, *gpde;
+    for (i3 = 0; i3 < (1 << 9); i3++) {
+        gpde = (pde_t *)pdrt[i3];
+        if (IS_P(gpde)) {
+            ept_gpa2hva(eptrt, (void *) gpde, (void **) &ptrt);
+            if (func_choice == 2) {
+                //cprintf("pdrt: %lx \n", gpde);
+                func2(ginfo, gpde);
+            }
+            FOR_EACH_PTE(ginfo, eptrt, ptrt, func1, func2, func_choice, perm & PGOFF(gpde), __i, _i, i3);
+        }
+    }
+}
 
-#define FOR_EACH_PDPE(ginfo, eptrt, pdprt, func1, func2, func_choice, _i) \
-    int64_t i2; \
-    pdpe_t *pdrt, *gpdpe; \
-    for (i2 = 0; i2 < (1 << 9); i2++) { \
-        gpdpe = (pdpe_t *)pdprt[i2]; \
-        if (IS_P(gpdpe)) { \
-            ept_gpa2hva(eptrt, (void *) gpdpe, (void **) &pdrt); \
-            if (func_choice == 2)  { cprintf("pdpe: %lx\n", gpdpe); func2(ginfo, gpdpe); }\
-            FOR_EACH_PDE(ginfo, eptrt, pdrt, func1, func2, func_choice, _i, i2); \
-        } \
-    } \
+void
+FOR_EACH_PDPE(struct VmxGuestInfo *ginfo, uint64_t *eptrt, uint64_t *pdprt,
+    void (*func1)(struct VmxGuestInfo *, uint64_t *, pte_t *, void *, pte_t *, int),
+    void (*func2)(struct VmxGuestInfo *, void *), int func_choice,
+    int perm, uint64_t _i) {
+    uint64_t i2;
+    pdpe_t *pdrt, *gpdpe;
+    for (i2 = 0; i2 < (1 << 9); i2++) {
+        gpdpe = (pdpe_t *)pdprt[i2];
+        if (IS_P(gpdpe)) {
+            ept_gpa2hva(eptrt, (void *) gpdpe, (void **) &pdrt);
+            if (func_choice == 2) {
+                //cprintf("pdpe: %lx\n", gpdpe);
+                func2(ginfo, gpdpe);
+            }
+            FOR_EACH_PDE(ginfo, eptrt, pdrt, func1, func2, func_choice, perm & PGOFF(gpdpe), _i, i2);
+        }
+    }
+}
 
-#define FOR_EACH_PML4E(ginfo, eptrt, pml4rt, func1, func2, func_choice) \
-    int64_t i1; \
-    pml4e_t *pdprt, *gpml4e; \
-    for (i1 = 0; i1 < (1 << 9); i1++) { \
-        gpml4e = (pml4e_t *)pml4rt[i1]; \
-        if (IS_P(gpml4e)) { \
-            ept_gpa2hva(eptrt, (void *) gpml4e, (void **) &pdprt); \
-            if (func_choice == 2) { cprintf("pml4e: %lx\n", gpml4e); func2(ginfo, gpml4e); } \
-            FOR_EACH_PDPE(ginfo, eptrt, pdprt, func1, func2, func_choice, i1); \
-        } \
-    } \
+void
+FOR_EACH_PML4E(struct VmxGuestInfo *ginfo, uint64_t *eptrt, uint64_t *pml4rt,
+    void (*func1)(struct VmxGuestInfo *, uint64_t *, pte_t *, void *, pte_t *, int),
+    void (*func2)(struct VmxGuestInfo *, void *), int func_choice) {
+    uint64_t i1;
+    pml4e_t *pdprt, *gpml4e;
+    for (i1 = 0; i1 < (1 << 9); i1++) {
+        gpml4e = (pml4e_t *)pml4rt[i1];
+        if (IS_P(gpml4e)) {
+            ept_gpa2hva(eptrt, (void *) gpml4e, (void **) &pdprt);
+            if (func_choice == 2) {
+                //cprintf("pml4e: %lx\n", gpml4e);
+                func2(ginfo, gpml4e);
+            }
+            FOR_EACH_PDPE(ginfo, eptrt, pdprt, func1, func2, func_choice, PGOFF(gpml4e), i1);
+        }
+    }
+}
 
 void *
 gva2hva(struct VmxGuestInfo *ginfo, uint64_t *eptrt, void *gva, void **_gpa) {
@@ -162,12 +193,16 @@ write_protect(struct VmxGuestInfo *ginfo, void *gpa) {
 
     // Get gva from gpa with rmap
     gva = (void *) gpa2gva(ginfo, (void *)PTE_ADDR(gpa));
+    //cprintf("write protect: GVA: %lx GPA: %lx\n", gva, gpa);
 
     // Find the entry for gva in SPT
     spte = pml4e_walk(sptrt, gva, 0);
 
     // Remove write permission from the entry
     *spte = *spte & ~PTE_W;
+    void *gpa_hva;
+    ept_gpa2hva(eptrt_, (void *) PTE_ADDR(gpa), (void **) &gpa_hva);
+    assert (PTE_ADDR(*pml4e_walk(sptrt, (void *)PTE_ADDR(gva), 0)) == PADDR((uint64_t)gpa_hva));
 }
 
 
@@ -175,17 +210,19 @@ write_protect(struct VmxGuestInfo *ginfo, void *gpa) {
 //                 add spt: gva -> hpa
 void
 add_pte(struct VmxGuestInfo *ginfo, uint64_t *eptrt, pte_t *pte,
-        void *gva, pte_t *gpte) {
+        void *gva, pte_t *gpte, int perm) {
     pml4e_t *sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
     pml4e_t *rmap = (pml4e_t *) ginfo->rmap;
-    int perm = PGOFF(gpte);
     if (pte) {
         physaddr_t hpa = (physaddr_t) PADDR(pte);
-        if (gva == (void *)0x800400f000)
-                cprintf("Map %lx -> %lx (%d)\n", gva, hpa, perm);
+        //cprintf("Map %lx -> %lx -> %lx (%d)\n", gva, gpte, hpa, perm);
         page_insert(sptrt, pa2page(hpa), (void *)PTE_ADDR(gva), perm);
+        if ((void *)*pml4e_walk(sptrt, (void *)PTE_ADDR(gva), 0) != (void *)(hpa | perm)) {
+            //cprintf("add_pte fail: Actual: %lx Expect: %lx Perm: %lx HVA: %lx GVA: %lx\n", PTE_ADDR(*pml4e_walk(sptrt, (void *)PTE_ADDR(gva), 0)), hpa, perm, pte, PTE_ADDR(gva));
+            panic("fail\n");
+        }
         if (perm & PTE_W) { // build a reverse map: i.e. gpa -> gva
-            //cprintf("Add reversemap %lx -> %lx\n", gpte, gva);
+            //cprintf("Add reversemap %lx -> %lx %lx\n", gpte, gva, perm);
             rmap_insert(rmap, (void *)PTE_ADDR(gpte),
                     (void *)PTE_ADDR(gva), perm);
             gpa2gva(ginfo, (void *)PTE_ADDR(gpte)) == PTE_ADDR(gva);
@@ -214,15 +251,29 @@ bool
 build_spt(struct VmxGuestInfo *gInfo, uint64_t *eptrt) {
     struct PageInfo *new_page;
     pml4e_t *pml4e;
+    tlbflush();
     if (vmx_setup_sptrt(gInfo, vmcs_read64(VMCS_GUEST_CR3))) {
+        eptrt_ = eptrt;
         ept_gpa2hva(eptrt, (void *) gInfo->gcr3, (void **) &pml4e);
+        //cprintf("pass 1: %lx\n", pml4e);
         {FOR_EACH_PML4E(gInfo, eptrt, pml4e, add_pte, write_protect, 1);}
-        cprintf("write protect\n");
+        //cprintf("pass 2: %lx\n", pml4e);
         {FOR_EACH_PML4E(gInfo, eptrt, pml4e, add_pte, write_protect, 2);}
         write_protect(gInfo, (void *)gInfo->gcr3);
-        cprintf("write protect done\n");
     }
     return true;
+}
+
+bool rebuild_spt(struct VmxGuestInfo *gInfo, uint64_t *eptrt, uint64_t ncr3) {
+    pml4e_t *sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
+    free_spt_level(sptrt, 3);
+    free_rmap_level(gInfo->rmap, 3);
+    // free the spt root page
+    page_decref(pa2page(PADDR(sptrt)));
+    page_decref(pa2page(PADDR(gInfo->rmap)));
+    // flush tlb
+    vmcs_write64(VMCS_GUEST_CR3, ncr3);
+    return build_spt(gInfo, eptrt);
 }
 
 bool
@@ -233,10 +284,12 @@ handle_pf(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint64_t *eptrt) {
     pte_t *spte;
     void *fault_addr_hva = gva2hva(ginfo, eptrt, (void *)PTE_ADDR(fault_addr), (void **)&gpa);
     pml4e_t *sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
+    //cprintf("%lx -> %lx -> %lx\n", fault_addr, gpa, fault_addr_hva);
     if (fault_addr_hva) {
         spte = pml4e_walk(sptrt, (void *)PTE_ADDR(fault_addr), 0);
+        //cprintf("%lx -> %lx -> %lx -> %lx\n", fault_addr, gpa, fault_addr_hva, *spte);
         if (*spte && PGOFF(gpa) != PGOFF(*spte)) {
-            cprintf("FADDR: %lx FADDR_HVA: %lx GPA: %lx SPTE: %lx\n", fault_addr, fault_addr_hva, gpa, *spte);
+            //cprintf("FADDR: %lx FADDR_HVA: %lx GPA: %lx SPTE: %lx rip: %lx\n", fault_addr, fault_addr_hva, gpa, *spte, tf->tf_rip);
             vmcs_write32( VMCS_32BIT_CONTROL_EXCEPTION_BITMAP,
                     (1 << T_PGFLT) | (1 << T_ILLOP) );
             int fault_insn_len = vmcs_read32(VMCS_32BIT_VMEXIT_INSTRUCTION_LENGTH);
@@ -261,13 +314,13 @@ handle_pf(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint64_t *eptrt) {
         uint32_t error_code = vmcs_read32( VMCS_32BIT_VMEXIT_INTERRUPTION_ERR_CODE );
         vmcs_write32( VMCS_32BIT_CONTROL_VMENTRY_INTERRUPTION_INFO, intr );
         vmcs_write32( VMCS_32BIT_CONTROL_VMENTRY_EXCEPTION_ERR_CODE, error_code );
-        cprintf("inject pgfault: %lx errorcode:%d\n", fault_addr, error_code);
+        //cprintf("inject pgfault: %lx errorcode:%d\n", fault_addr, error_code);
         tf->tf_err = fault_addr;
         return true;
     } else if (gpa < 0xA0000 || (gpa >= 0x100000 && gpa < ginfo->phys_sz)) {
+        //cprintf("add gpa %lx to ept\n", gpa);
         insert_ept_entry(eptrt, gpa, ginfo);
-        vmcs_write64(VMCS_GUEST_CR3, ginfo->gcr3);
-        return build_spt(ginfo, eptrt);
+        return rebuild_spt(ginfo, eptrt, ginfo->gcr3);
     }
     return false;
 }
@@ -275,21 +328,12 @@ handle_pf(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint64_t *eptrt) {
 bool
 handle_pf_singlestep_done(struct Trapframe *tf,
         struct VmxGuestInfo *ginfo, uint64_t *eptrt) {
+    //cprintf("digest single stepping\n");
     ginfo->fault_ninsn[0] = ginfo->nchar[0];
     ginfo->fault_ninsn[1] = ginfo->nchar[1];
     ginfo->fault_ninsn = NULL;
     vmcs_write32( VMCS_32BIT_CONTROL_EXCEPTION_BITMAP, (1 << T_PGFLT) );
-    // free spt that was currently being used
-    pml4e_t *sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
-    free_spt_level(sptrt, 3);
-    free_rmap_level(ginfo->rmap, 3);
-    // free the spt root page
-    page_decref(pa2page(PADDR(sptrt)));
-    page_decref(pa2page(PADDR(ginfo->rmap)));
-    // flush tlb
-    tlbflush();
-    vmcs_write64(VMCS_GUEST_CR3, ginfo->gcr3);
-    return build_spt(ginfo, eptrt);
+    return rebuild_spt(ginfo, eptrt, ginfo->gcr3);
 }
 
 bool
@@ -837,16 +881,8 @@ handle_mov_cr(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
             break;
         case VMEXIT_CR3_READ:
             // free spt that was currently being used
-            sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
-            free_spt_level(sptrt, 3);
-            free_rmap_level(gInfo->rmap, 3);
-            // free the spt root page
-            page_decref(pa2page(PADDR(sptrt)));
-            page_decref(pa2page(PADDR(gInfo->rmap)));
-            // flush tlb
-            tlbflush();
-            vmcs_write64(VMCS_GUEST_CR3, *src);
-            build_spt(gInfo, eptrt);
+            // cprintf("CR3 change!: %lx\n", *src);
+            rebuild_spt(gInfo, eptrt, *src);
             break;
         default:
             return 0;

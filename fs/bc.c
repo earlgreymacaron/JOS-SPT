@@ -22,7 +22,11 @@ va_is_mapped(void *va)
 bool
 va_is_dirty(void *va)
 {
+#ifndef VMM_GUEST
 	return (uvpt[PGNUM(va)] & PTE_D) != 0;
+#else
+    return true;
+#endif
 }
 
 // Fault any disk block that is read in to memory by
@@ -100,7 +104,6 @@ flush_block(void *addr)
 	if (addr < (void*)DISKMAP || addr >= (void*)(DISKMAP + DISKSIZE))
 		panic("flush_block of bad va %08x", addr);
 
-
 	if (!va_is_mapped(addr) || !va_is_dirty(addr))
 		return;
 
@@ -132,7 +135,9 @@ check_bc(void)
 	strcpy(diskaddr(1), "OOPS!\n");
 	flush_block(diskaddr(1));
 	assert(va_is_mapped(diskaddr(1)));
+#ifndef VMM_GUEST
 	assert(!va_is_dirty(diskaddr(1)));
+#endif
 
 	// clear it out
 	sys_page_unmap(0, diskaddr(1));
