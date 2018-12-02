@@ -380,6 +380,9 @@ sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)
 		// TODO: Fix permissions.
 #ifndef VMM_GUEST
 		r = ept_page_insert(e->env_pml4e, pp, e->env_ipc_dstva, __EPTE_FULL);
+        struct VmxGuestInfo *ginfo = &e->env_vmxinfo;
+        pte_t gva = gpa2gva(ginfo, e->env_ipc_dstva);
+        // TODO: update spt
 #endif
     
 	} else if (srcva < (void*) UTOP && e->env_ipc_dstva < (void*) UTOP) {
