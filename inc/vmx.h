@@ -28,8 +28,13 @@ struct VmxGuestInfo {
 	uintptr_t *msr_guest_area;
 	int vcpunum;
     MemoryMode mmode;
-    physaddr_t gcr3; // hold the gpa
+    uint64_t gcr3; // hold the gpa
     pml4e_t *rmap; // reverse map: gpa -> gva
+
+    // For spt write-protect,
+    // temporary push ud2 to run only one instruction and then revert it back
+    char nchar[2];
+    char *fault_ninsn;
 };
 
 #endif

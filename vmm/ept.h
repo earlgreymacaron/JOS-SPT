@@ -28,4 +28,5 @@ int ept_page_insert(epte_t* eptrt, struct PageInfo* pp, void* gpa, int perm);
 #define ADDR_TO_IDX(pa, n) \
     ((((uint64_t) (pa)) >> (12 + 9 * (n))) & ((1 << 9) - 1))
 
+#define gpa2gva(_ginfo, _gpa) (PTE_ADDR(*pml4e_walk(_ginfo->rmap, _gpa, 0)))
 #endif

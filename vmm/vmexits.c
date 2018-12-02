@@ -19,16 +19,10 @@
 #include <kern/env.h>
 #include <kern/cpu.h>
 
-typedef void (*FUNC2)(struct VmxGuestInfo *, void *);
-#define NULLFUNC2 ((FUNC2) NULL)
-
-typedef void (*FUNC1)(struct VmxGuestInfo *, uint64_t *, pte_t *);
-#define NULLFUNC1 ((FUNC1) NULL)
-
 bool
 insert_ept_entry (uint64_t *eptrt, uint64_t gpa, struct VmxGuestInfo *ginfo);
-void 
-free_spt_level(pml4e_t* sptrt, int level);
+void free_spt_level(pml4e_t* sptrt, int level);
+void free_rmap_level(pml4e_t* rmap, int level);
 
 static int vmdisk_number = 0;	//this number assign to the vm
 int 
@@ -92,7 +86,7 @@ handle_interrupt_window(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint32
         gpde = (pde_t *)pdrt[i3]; \
         if (IS_P(gpde)) { \
             ept_gpa2hva(eptrt, (void *) gpde, (void **) &ptrt); \
-            if (func_choice == 2) func2(ginfo, gpde); \
+            if (func_choice == 2) { cprintf("pdrt: %lx \n", gpde);func2(ginfo, gpde); }\
             FOR_EACH_PTE(ginfo, eptrt, ptrt, func1, func2, func_choice, __i, _i, i3); \
         } \
     } \
@@ -104,7 +98,7 @@ handle_interrupt_window(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint32
         gpdpe = (pdpe_t *)pdprt[i2]; \
         if (IS_P(gpdpe)) { \
             ept_gpa2hva(eptrt, (void *) gpdpe, (void **) &pdrt); \
-            if (func_choice == 2) func2(ginfo, gpdpe); \
+            if (func_choice == 2)  { cprintf("pdpe: %lx\n", gpdpe); func2(ginfo, gpdpe); }\
             FOR_EACH_PDE(ginfo, eptrt, pdrt, func1, func2, func_choice, _i, i2); \
         } \
     } \
@@ -116,20 +110,20 @@ handle_interrupt_window(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint32
         gpml4e = (pml4e_t *)pml4rt[i1]; \
         if (IS_P(gpml4e)) { \
             ept_gpa2hva(eptrt, (void *) gpml4e, (void **) &pdprt); \
-            if (func_choice == 2) func2(ginfo, gpml4e); \
+            if (func_choice == 2) { cprintf("pml4e: %lx\n", gpml4e); func2(ginfo, gpml4e); } \
             FOR_EACH_PDPE(ginfo, eptrt, pdprt, func1, func2, func_choice, i1); \
         } \
     } \
 
-uintptr_t
-gva2hva(struct VmxGuestInfo *ginfo, uint64_t *eptrt, uintptr_t gva, physaddr_t *_gpa) {
+void *
+gva2hva(struct VmxGuestInfo *ginfo, uint64_t *eptrt, void *gva, void **_gpa) {
     void *guest_cr3 = (void *)ginfo->gcr3; // gpa
     pml4e_t *pml4e; // hva
     pdpe_t *pdpe, gpdpe;
     pde_t *pde, gpde;
     pte_t *pte, gpte;
-    uintptr_t va;
-    physaddr_t gpa;
+    void *va;
+    void *gpa;
     ept_gpa2hva(eptrt, (void *) guest_cr3, (void **) &pml4e);
 
     gpdpe = pml4e[PML4(gva)];
@@ -141,18 +135,19 @@ gva2hva(struct VmxGuestInfo *ginfo, uint64_t *eptrt, uintptr_t gva, physaddr_t *
             gpte = pde[PDX(gva)];
             if (gpte & PTE_P) {
                 ept_gpa2hva(eptrt, (void *) gpte, (void **) &pte);
-                gpa = (physaddr_t)pte[PTX(gva)];
+                gpa = (void *)pte[PTX(gva)];
                 if ((uint64_t) gpa & PTE_P) {
-//    cprintf(" PML4E: %lx (%lx) || PDPE: %lx (%lx) || PDE: %lx (%lx) || PTE: %lx (%lx)\n",
-//            pml4e, guest_cr3, pdpe, gpdpe, pde, gpde, pte, gpte);
+    //cprintf("%lx -> PML4E: %lx (%lx) || PDPE: %lx (%lx) || PDE: %lx (%lx) || PTE: %lx (%lx)\n",
+    //        gva, pml4e, guest_cr3, pdpe, gpdpe, pde, gpde, pte, gpte);
                     ept_gpa2hva(eptrt, (void *) gpa, (void **) &va);
+                    //cprintf("Got GPA: %lx VA: %lx\n", gpa, va);
                     if (_gpa) *_gpa = gpa;
-                    return va;
+                    return (void *)va;
                 }
             }
         }
     }
-    return 0;
+    return NULL;
 }
 
 
@@ -166,7 +161,7 @@ write_protect(struct VmxGuestInfo *ginfo, void *gpa) {
     sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
 
     // Get gva from gpa with rmap
-    gva = (void *) pml4e_walk(ginfo->rmap, gpa, 0);
+    gva = (void *) gpa2gva(ginfo, (void *)PTE_ADDR(gpa));
 
     // Find the entry for gva in SPT
     spte = pml4e_walk(sptrt, gva, 0);
@@ -175,6 +170,9 @@ write_protect(struct VmxGuestInfo *ginfo, void *gpa) {
     *spte = *spte & ~PTE_W;
 }
 
+
+// based on eptrt, add rmap: gpa -> gva
+//                 add spt: gva -> hpa
 void
 add_pte(struct VmxGuestInfo *ginfo, uint64_t *eptrt, pte_t *pte,
         void *gva, pte_t *gpte) {
@@ -183,17 +181,19 @@ add_pte(struct VmxGuestInfo *ginfo, uint64_t *eptrt, pte_t *pte,
     int perm = PGOFF(gpte);
     if (pte) {
         physaddr_t hpa = (physaddr_t) PADDR(pte);
-        //cprintf("Map %lx -> %lx (%d)\n", gva, hpa, perm);
-        page_insert(sptrt, pa2page(hpa), (void *)ROUNDDOWN(gva, PGSIZE), perm);
+        if (gva == (void *)0x800400f000)
+                cprintf("Map %lx -> %lx (%d)\n", gva, hpa, perm);
+        page_insert(sptrt, pa2page(hpa), (void *)PTE_ADDR(gva), perm);
         if (perm & PTE_W) { // build a reverse map: i.e. gpa -> gva
             //cprintf("Add reversemap %lx -> %lx\n", gpte, gva);
-            rmap_insert(rmap, (void *)ROUNDDOWN(gpte, PGSIZE),
-                    (void *)ROUNDDOWN(gva, PGSIZE), perm);
+            rmap_insert(rmap, (void *)PTE_ADDR(gpte),
+                    (void *)PTE_ADDR(gva), perm);
+            gpa2gva(ginfo, (void *)PTE_ADDR(gpte)) == PTE_ADDR(gva);
         }
     }
 }
 
-bool vmx_setup_sptrt(struct VmxGuestInfo *gInfo, physaddr_t gcr3) {
+bool vmx_setup_sptrt(struct VmxGuestInfo *gInfo, uint64_t gcr3) {
     assert(gInfo->mmode == MODE_SPT);
     struct PageInfo *sptrt_page = page_alloc(ALLOC_ZERO);
     if (!sptrt_page) return false;
@@ -217,7 +217,10 @@ build_spt(struct VmxGuestInfo *gInfo, uint64_t *eptrt) {
     if (vmx_setup_sptrt(gInfo, vmcs_read64(VMCS_GUEST_CR3))) {
         ept_gpa2hva(eptrt, (void *) gInfo->gcr3, (void **) &pml4e);
         {FOR_EACH_PML4E(gInfo, eptrt, pml4e, add_pte, write_protect, 1);}
+        cprintf("write protect\n");
         {FOR_EACH_PML4E(gInfo, eptrt, pml4e, add_pte, write_protect, 2);}
+        write_protect(gInfo, (void *)gInfo->gcr3);
+        cprintf("write protect done\n");
     }
     return true;
 }
@@ -225,20 +228,68 @@ build_spt(struct VmxGuestInfo *gInfo, uint64_t *eptrt) {
 bool
 handle_pf(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint64_t *eptrt) {
     uint64_t fault_addr = vmcs_read64(VMCS_VMEXIT_QUALIFICATION);
-    physaddr_t gpa;
+    uint64_t gpa = 0;
     void *va;
-    intptr_t fault_addr_hva = gva2hva(ginfo, eptrt, fault_addr, &gpa);
+    pte_t *spte;
+    void *fault_addr_hva = gva2hva(ginfo, eptrt, (void *)PTE_ADDR(fault_addr), (void **)&gpa);
     pml4e_t *sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
     if (fault_addr_hva) {
-        cprintf("%lx %lx\n", fault_addr, fault_addr_hva);
-    } else if (gpa < 0xA0000 || (gpa >= 0x100000 && gpa < ginfo->phys_sz)) {
-        //cprintf("%lx\n", gpa);
-        insert_ept_entry(eptrt, gpa, ginfo);
-        ept_gpa2hva(eptrt, (void *) gpa, (void **) &va);
-        add_pte(ginfo, eptrt, va, (pte_t *)PTE_ADDR(fault_addr), (pte_t *)gpa);
+        spte = pml4e_walk(sptrt, (void *)PTE_ADDR(fault_addr), 0);
+        if (*spte && PGOFF(gpa) != PGOFF(*spte)) {
+            cprintf("FADDR: %lx FADDR_HVA: %lx GPA: %lx SPTE: %lx\n", fault_addr, fault_addr_hva, gpa, *spte);
+            vmcs_write32( VMCS_32BIT_CONTROL_EXCEPTION_BITMAP,
+                    (1 << T_PGFLT) | (1 << T_ILLOP) );
+            int fault_insn_len = vmcs_read32(VMCS_32BIT_VMEXIT_INSTRUCTION_LENGTH);
+            uint64_t fault_ninsn_gva = tf->tf_rip + fault_insn_len;
+            char *fault_ninsn = (char *)gva2hva(ginfo, eptrt, (void *)fault_ninsn_gva, NULL) + PGOFF(fault_ninsn_gva);
+            ginfo->nchar[0] = ((char *)fault_ninsn)[0];
+            ginfo->nchar[1] = ((char *)fault_ninsn)[1];
+            ginfo->fault_ninsn = fault_ninsn;
+            // Push int 0x3
+            ((char *)fault_ninsn)[0] = 0x0f;
+            ((char *)fault_ninsn)[1] = 0x0b;
+            *spte = (*spte) | PTE_W;
+            invlpg((void *)PTE_ADDR(*spte));
+            return true;
+        } // ELSE: true fault
+    } else if (!fault_addr_hva && !gpa) {
+        // True fault: 24.8.3 VM-Entry Controls for Event Injection
+        uint32_t intr = (T_PGFLT) | // Pagefault
+                        (3 * (1 << 8)) | // Hardware exception
+                        (1 << 11) | // Deliver error code
+                        0x80000000; // Valid
+        uint32_t error_code = vmcs_read32( VMCS_32BIT_VMEXIT_INTERRUPTION_ERR_CODE );
+        vmcs_write32( VMCS_32BIT_CONTROL_VMENTRY_INTERRUPTION_INFO, intr );
+        vmcs_write32( VMCS_32BIT_CONTROL_VMENTRY_EXCEPTION_ERR_CODE, error_code );
+        cprintf("inject pgfault: %lx errorcode:%d\n", fault_addr, error_code);
+        tf->tf_err = fault_addr;
         return true;
+    } else if (gpa < 0xA0000 || (gpa >= 0x100000 && gpa < ginfo->phys_sz)) {
+        insert_ept_entry(eptrt, gpa, ginfo);
+        vmcs_write64(VMCS_GUEST_CR3, ginfo->gcr3);
+        return build_spt(ginfo, eptrt);
     }
     return false;
+}
+
+bool
+handle_pf_singlestep_done(struct Trapframe *tf,
+        struct VmxGuestInfo *ginfo, uint64_t *eptrt) {
+    ginfo->fault_ninsn[0] = ginfo->nchar[0];
+    ginfo->fault_ninsn[1] = ginfo->nchar[1];
+    ginfo->fault_ninsn = NULL;
+    vmcs_write32( VMCS_32BIT_CONTROL_EXCEPTION_BITMAP, (1 << T_PGFLT) );
+    // free spt that was currently being used
+    pml4e_t *sptrt = (pml4e_t *)KADDR(vmcs_read64(VMCS_GUEST_CR3)); // hva
+    free_spt_level(sptrt, 3);
+    free_rmap_level(ginfo->rmap, 3);
+    // free the spt root page
+    page_decref(pa2page(PADDR(sptrt)));
+    page_decref(pa2page(PADDR(ginfo->rmap)));
+    // flush tlb
+    tlbflush();
+    vmcs_write64(VMCS_GUEST_CR3, ginfo->gcr3);
+    return build_spt(ginfo, eptrt);
 }
 
 bool
@@ -246,7 +297,8 @@ handle_nmi(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint64_t *eptrt,
            uint32_t intr_info) {
     uint32_t vector = intr_info & 0xff;
     switch (vector) {
-        case 0xe: return handle_pf(tf, ginfo, eptrt);
+        case T_ILLOP: return handle_pf_singlestep_done(tf, ginfo, eptrt);
+        case T_PGFLT: return handle_pf(tf, ginfo, eptrt);
         default:
             return false;
     }
@@ -531,8 +583,7 @@ void vmx_switch_spt(struct Trapframe *tf, struct VmxGuestInfo *gInfo,
                              VMCS_SECONDARY_VMEXEC_CTL_UNRESTRICTED_GUEST);
     vmcs_write32( VMCS_32BIT_CONTROL_SECONDARY_VMEXEC_CONTROLS,
             procbased_ctls2_or & procbased_ctls2_and );
-    vmcs_write32( VMCS_32BIT_CONTROL_EXCEPTION_BITMAP, (1 << 14));
-
+    vmcs_write32( VMCS_32BIT_CONTROL_EXCEPTION_BITMAP, (1 << T_PGFLT) );
 }
 
 
