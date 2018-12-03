@@ -601,14 +601,15 @@ void vmx_switch_spt(struct Trapframe *tf, struct VmxGuestInfo *gInfo,
     uint32_t procbased_ctls_or, procbased_ctls_and;
     vmx_read_capability_msr( IA32_VMX_PROCBASED_CTLS, 
             &procbased_ctls_and, &procbased_ctls_or );
+
     // Make sure there are secondary controls.
     assert( BIT( procbased_ctls_and, 31 ) == 0x1 ); 
 
     procbased_ctls_or |= VMCS_PROC_BASED_VMEXEC_CTL_ACTIVESECCTL; 
     procbased_ctls_or |= VMCS_PROC_BASED_VMEXEC_CTL_HLTEXIT;
     procbased_ctls_or |= VMCS_PROC_BASED_VMEXEC_CTL_USEIOBMP;
-    /* CR3 accesses and invlpg don't need to cause VM Exits when EPT
-       enabled */
+
+    /* CR3 accesses and invlpg need to cause VM Exits when SPT enabled */
     procbased_ctls_or |= VMCS_PROC_BASED_VMEXEC_CTL_CR3LOADEXIT |
                          VMCS_PROC_BASED_VMEXEC_CTL_CR3STOREXIT |
                          VMCS_PROC_BASED_VMEXEC_CTL_INVLPGEXIT;
@@ -621,7 +622,7 @@ void vmx_switch_spt(struct Trapframe *tf, struct VmxGuestInfo *gInfo,
     vmx_read_capability_msr( IA32_VMX_PROCBASED_CTLS2, 
             &procbased_ctls2_and, &procbased_ctls2_or );
 
-    // Enable EPT.
+    // Disable EPT.
     procbased_ctls2_or &= ~( VMCS_SECONDARY_VMEXEC_CTL_ENABLE_EPT |
                              VMCS_SECONDARY_VMEXEC_CTL_UNRESTRICTED_GUEST);
     vmcs_write32( VMCS_32BIT_CONTROL_SECONDARY_VMEXEC_CONTROLS,
