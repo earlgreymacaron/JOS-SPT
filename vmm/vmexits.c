@@ -412,7 +412,6 @@ handle_wrmsr(struct Trapframe *tf, struct VmxGuestInfo *ginfo) {
 		if(BIT(cur_val, EFER_LME) == 0 && BIT(new_val, EFER_LME) == 1) {
 			// Long mode enable.
 			uint32_t entry_ctls = vmcs_read32( VMCS_32BIT_CONTROL_VMENTRY_CONTROLS );
-			// entry_ctls |= VMCS_VMENTRY_x64_GUEST;
 			vmcs_write32( VMCS_32BIT_CONTROL_VMENTRY_CONTROLS, 
 				      entry_ctls );
 
@@ -874,6 +873,7 @@ handle_mov_cr(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
     struct PageInfo *new_page;
     pml4e_t *sptrt;
 
+    //cprintf("mov_cr_reason: %lx @ %lx\n", reason, tf->tf_rip);
     switch (reason & VMX_CR_REASON_MASK) {
         case VMEXIT_CR3_WRITE:
             // get gcr3 and translated to gpa and then write it to value
