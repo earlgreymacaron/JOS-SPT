@@ -1,6 +1,6 @@
 
 #include <inc/lib.h>
-
+//#define RUN_LS
 struct {
 	char msg1[5000];
 	char msg2[1000];
@@ -49,7 +49,6 @@ umain(int argc, char **argv)
 	cprintf("%s\n", args);
 
 
-	cprintf("init: running sh\n");
 
 	// being run directly from kernel, so no file descriptors open yet
 	close(0);
@@ -59,6 +58,18 @@ umain(int argc, char **argv)
 		panic("first opencons used fd %d", r);
 	if ((r = dup(0, 1)) < 0)
 		panic("dup: %e", r);
+#ifdef VMM_GUEST
+#ifdef RUN_LS
+  // Run "ls" to verify that SPT works
+		cprintf("\x1b[33m> run 'ls' before loading $hell\x1b[33m\n");
+		r = spawnl("/bin/ls", "ls", (char*)0);
+		if (r < 0) {
+			cprintf("init: spawn ls: %e\n", r);
+		}
+		wait(r);
+#endif
+#endif
+	cprintf("\x1b[0minit: running sh\n");
 	while (1) {
 		cprintf("init: starting sh\n");
 		r = spawnl("/bin/sh", "sh", (char*)0);

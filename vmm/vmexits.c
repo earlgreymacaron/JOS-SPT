@@ -19,6 +19,8 @@
 #include <kern/env.h>
 #include <kern/cpu.h>
 
+#define LOG
+
 bool
 insert_ept_entry (uint64_t *eptrt, uint64_t gpa, struct VmxGuestInfo *ginfo);
 void free_spt_level(pml4e_t* sptrt, int level);
@@ -251,6 +253,9 @@ bool
 build_spt(struct VmxGuestInfo *gInfo, uint64_t *eptrt) {
     struct PageInfo *new_page;
     pml4e_t *pml4e;
+#if defined(LOG)
+    cprintf("\x1b[35mBuilt SPT (+ RMAP)\x1b[35m\n");
+#endif
     tlbflush();
     if (vmx_setup_sptrt(gInfo, vmcs_read64(VMCS_GUEST_CR3))) {
         eptrt_ = eptrt;
@@ -289,6 +294,9 @@ handle_pf(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint64_t *eptrt) {
         spte = pml4e_walk(sptrt, (void *)PTE_ADDR(fault_addr), 0);
         //cprintf("%lx -> %lx -> %lx -> %lx\n", fault_addr, gpa, fault_addr_hva, *spte);
         if (*spte && PGOFF(gpa) != PGOFF(*spte)) {
+#ifdef LOG
+            cprintf("\x1b[36mVMExit: Guest's Page Fault (Write-Protect)\x1b[36m\n");
+#endif
             //cprintf("FADDR: %lx FADDR_HVA: %lx GPA: %lx SPTE: %lx rip: %lx\n", fault_addr, fault_addr_hva, gpa, *spte, tf->tf_rip);
             vmcs_write32( VMCS_32BIT_CONTROL_EXCEPTION_BITMAP,
                     (1 << T_PGFLT) | (1 << T_ILLOP) );
@@ -306,6 +314,9 @@ handle_pf(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint64_t *eptrt) {
             return true;
         } // ELSE: true fault
     } else if (!fault_addr_hva && !gpa) {
+#ifdef LOG
+            cprintf("\x1b[36mVMExit: Guest's True Page Fault\x1b[36m\n");
+#endif
         // True fault: 24.8.3 VM-Entry Controls for Event Injection
         uint32_t intr = (T_PGFLT) | // Pagefault
                         (3 * (1 << 8)) | // Hardware exception
@@ -341,8 +352,13 @@ handle_nmi(struct Trapframe *tf, struct VmxGuestInfo *ginfo, uint64_t *eptrt,
            uint32_t intr_info) {
     uint32_t vector = intr_info & 0xff;
     switch (vector) {
-        case T_ILLOP: return handle_pf_singlestep_done(tf, ginfo, eptrt);
-        case T_PGFLT: return handle_pf(tf, ginfo, eptrt);
+        case T_ILLOP:
+#ifdef LOG
+            cprintf("\x1b[36mVMExit: Illegal Op\x1b[36m\n");
+#endif
+            return handle_pf_singlestep_done(tf, ginfo, eptrt);
+        case T_PGFLT:
+            return handle_pf(tf, ginfo, eptrt);
         default:
             return false;
     }
@@ -766,6 +782,8 @@ handle_vmcall(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
 		handled = true;
 		break;
     case VMX_VMCALL_SWITCH_MMODE: // switch the memory mode
+    cprintf("\033[22;34m*** called VMX_VMCALL_SWITCH_MMODE: gInfo->mmode changed from MODE_EPT (default) -> MODE_SPT ***\033[0m\n");
+    cprintf("\033[22;34m*** From Now On, Guest Operates in Shadow Mode ***\033[0m\n");
         mmode = tf->tf_regs.reg_rdx;
         if (gInfo->mmode != mmode) {
             switch (mmode) {
@@ -877,10 +895,17 @@ handle_mov_cr(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
     //cprintf("mov_cr_reason: %lx @ %lx\n", reason, tf->tf_rip);
     switch (reason & VMX_CR_REASON_MASK) {
         case VMEXIT_CR3_WRITE:
+#ifdef LOG
+            cprintf("\x1b[36mVMExit: CR3 Read \x1b[36m\n");
+#endif
             // get gcr3 and translated to gpa and then write it to value
             *src = (uint64_t) gInfo->gcr3;
             break;
         case VMEXIT_CR3_READ:
+#ifdef LOG
+            cprintf("\x1b[36mVMExit: CR3 Write ($CR3 changed to %lx)\x1b[36m\n", 
+                    *src);
+#endif
             // free spt that was currently being used
             // cprintf("CR3 change!: %lx\n", *src);
             rebuild_spt(gInfo, eptrt, *src);
@@ -894,6 +919,9 @@ handle_mov_cr(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
 
 bool
 handle_invlpg(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt) {
+#ifdef LOG
+    cprintf("\x1b[36mVMExit: Invlpg\x1b[36m\n");
+#endif
     uint64_t gaddr = vmcs_read64(VMCS_VMEXIT_QUALIFICATION);
     uint64_t haddr;
     ept_gpa2hva(eptrt, (void *) gaddr, (void **) &haddr);
